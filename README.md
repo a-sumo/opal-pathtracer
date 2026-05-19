@@ -1,6 +1,6 @@
 # Opal Path Tracer
 
-![opal path tracer](media/opal-turntable.gif)
+![100 spp Modal opal turntable](media/opal-modal-100spp-turntable.gif)
 
 This is a small browser renderer for exploring opal play-of-color. It treats the stone as a volume of many tiny crystal domains, then traces wavelength-sampled rays through that structure so the color comes from optical geometry rather than a painted texture.
 
@@ -34,6 +34,14 @@ modal run modal_render.py --samples 100 --angles 72 --frame-size 512 --output-di
 ```
 
 The Modal path renders individual frames and writes them locally, so stitching can happen outside Modal.
+
+The README preview above was stitched from a 72-frame Modal render at 100 samples per pixel:
+
+```bash
+ffmpeg -framerate 12 -pattern_type glob -i 'renders/opal-100spp-frames/*.webp' \
+  -vf "fps=12,scale=384:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3" \
+  media/opal-modal-100spp-turntable.gif
+```
 
 ## What It Does
 
