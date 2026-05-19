@@ -161,10 +161,10 @@ if (FRAME_MODE) {
   let lastSamples = -1;
   while (true) {
     const n = await page.evaluate(() => window.__opalTurntableAPI.sampleCount());
-    if (n !== lastSamples) {
+    if (n !== lastSamples && (n <= 1 || n >= SAMPLES || n % 10 === 0)) {
       console.log(`  samples ${Math.min(n, SAMPLES)}/${SAMPLES}`);
-      lastSamples = n;
     }
+    lastSamples = n;
     if (n >= SAMPLES) break;
     await new Promise(r => setTimeout(r, 2000));
   }
