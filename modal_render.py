@@ -138,19 +138,24 @@ def render_frame(
             "--preset",
             preset,
         ]
-        result = subprocess.run(
+        render_proc = subprocess.Popen(
             cmd,
             cwd="/app",
             env=env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=7000,
-            check=False,
         )
-        print(result.stdout)
-        if result.returncode != 0:
-            raise RuntimeError(f"Render failed with exit code {result.returncode}")
+        assert render_proc.stdout is not None
+        try:
+            for line in render_proc.stdout:
+                print(line, end="", flush=True)
+            returncode = render_proc.wait(timeout=7000)
+        except subprocess.TimeoutExpired as err:
+            render_proc.kill()
+            raise TimeoutError("Render subprocess timed out") from err
+        if returncode != 0:
+            raise RuntimeError(f"Render failed with exit code {returncode}")
 
         data = Path(output).read_bytes()
         return {
