@@ -81,6 +81,7 @@ if (process.platform === 'darwin') {
 const launchOptions = {
   headless: 'new',
   args: chromeArgs,
+  protocolTimeout: 60 * 60 * 1000,
 };
 
 if (process.env.PUPPETEER_EXECUTABLE_PATH) {
@@ -147,7 +148,7 @@ if (PROBE) {
 if (FRAME_MODE) {
   console.log(`rendering frame ${ANGLE_INDEX + 1}/${ANGLES} @ ${SAMPLES} spp...`);
   const t0 = Date.now();
-  const dataUrl = await page.evaluate((cfg) => window.__opalTurntableAPI.renderFrame(cfg), {
+  const cfg = {
     angleIndex: ANGLE_INDEX,
     angles: ANGLES,
     samples: SAMPLES,
@@ -155,7 +156,19 @@ if (FRAME_MODE) {
     distance: 2.7,
     format: FORMAT,
     quality: QUALITY / 100,
-  });
+  };
+  await page.evaluate((c) => window.__opalTurntableAPI.prepareFrame(c), cfg);
+  let lastSamples = -1;
+  while (true) {
+    const n = await page.evaluate(() => window.__opalTurntableAPI.sampleCount());
+    if (n !== lastSamples) {
+      console.log(`  samples ${Math.min(n, SAMPLES)}/${SAMPLES}`);
+      lastSamples = n;
+    }
+    if (n >= SAMPLES) break;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  const dataUrl = await page.evaluate((c) => window.__opalTurntableAPI.captureFrame(c), cfg);
   const ext = FORMAT === 'jpeg' ? 'jpg' : 'webp';
   const out = values.output || path.join(
     OUTPUT_DIR,

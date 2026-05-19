@@ -1294,16 +1294,19 @@ window.__opalTurntableAPI = {
   prepareFrame: prepareTurntableFrame,
   sampleCount: () => sampleCount,
   status: () => document.getElementById('ttStatus').textContent,
-  async renderFrame(cfg = {}) {
-    const samples = cfg.samples ?? TT.samplesPerAngle;
-    await prepareTurntableFrame(cfg);
-    await waitForSamples(samples);
+  async captureFrame(cfg = {}) {
     await nextFrame();
     const format = cfg.format || TT.format || 'webp';
     const mime = format === 'jpeg' ? 'image/jpeg' : 'image/webp';
     const quality = cfg.quality ?? TT.quality ?? 0.9;
     const blob = await new Promise(r => canvas.toBlob(r, mime, quality));
     return blobToDataURL(blob);
+  },
+  async renderFrame(cfg = {}) {
+    const samples = cfg.samples ?? TT.samplesPerAngle;
+    await prepareTurntableFrame(cfg);
+    await waitForSamples(samples);
+    return this.captureFrame(cfg);
   },
 };
 
