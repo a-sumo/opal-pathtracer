@@ -1,0 +1,1574 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Opal Path Tracer — Ewald Spectral</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #09090b; color: #e0e0e0; font-family: monospace; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #ui {
+    position: fixed; top: 16px; right: 16px; width: 240px;
+    background: rgba(10,10,15,0.92); border: 1px solid #27272a; border-radius: 8px;
+    padding: 14px; backdrop-filter: blur(8px); z-index: 10;
+  }
+  #ui h2 { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #555; margin-bottom: 10px; }
+  /* Flex rows holding range inputs MUST use min-width:0 on both the row and
+     the input itself. Default min-width:auto makes the slider cling to its
+     intrinsic ~129px width and overflow any narrow container. */
+  .row { display: flex; align-items: center; gap: 6px; margin: 5px 0; min-width: 0; }
+  .row label { font-size: 10px; color: #999; min-width: 80px; flex-shrink: 0; }
+  .row input[type=range] { flex: 1 1 0; min-width: 0; width: 0; }
+  .row .val { font-size: 11px; color: #fff; min-width: 56px; max-width: 56px; text-align: right; font-weight: 600; flex-shrink: 0; }
+  /* Number-input variant of .val — share width/typography with the span
+     version above, strip the native chrome (spinners + outline) so the
+     widget reads as a tiny editable label, and only highlight on focus. */
+  input.val {
+    background: #141414; color: #fff; border: 1px solid #2a2a2a;
+    border-radius: 3px; padding: 1px 4px; font-family: inherit; font-size: 11px;
+    -moz-appearance: textfield;
+  }
+  input.val:focus { outline: none; border-color: #1878e0; }
+  input.val::-webkit-inner-spin-button,
+  input.val::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  #info { position: fixed; bottom: 16px; left: 16px; font-size: 12px; color: #888; z-index: 10; }
+  select { background: #18181b; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; padding: 3px 6px; font-size: 11px; font-family: monospace; width: 100%; }
+  button.opbtn {
+    background: #18181b; color: #e0e0e0; border: 1px solid #333;
+    border-radius: 4px; padding: 6px 8px; font-size: 11px;
+    font-family: monospace; cursor: pointer; width: 100%;
+  }
+  button.opbtn:hover { background: #1f1f26; border-color: #444; }
+
+  /* ── Turntable modal ── */
+  #ttModal { position: fixed; inset: 0; z-index: 100; display: none; align-items: center; justify-content: center; }
+  #ttModal[data-open="1"] { display: flex; }
+  #ttModal .backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.92); }
+  #ttModal .panel {
+    position: relative; background: rgba(15,15,20,0.96);
+    border: 1px solid #27272a; border-radius: 12px; padding: 18px;
+    display: flex; gap: 18px; max-width: 96vw; max-height: 94vh;
+  }
+  #ttModal .head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  #ttModal .title { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #888; }
+  #ttModal .close {
+    background: none; border: 1px solid #333; color: #ccc;
+    border-radius: 4px; padding: 1px 9px; font-size: 14px;
+    font-family: monospace; cursor: pointer; line-height: 1.2;
+  }
+  #ttModal .close:hover { background: #1f1f26; }
+  #ttSlot {
+    width: min(720px, 76vmin); height: min(720px, 76vmin);
+    background: #000; border-radius: 8px; overflow: hidden;
+  }
+  /* Force canvas to fill the slot regardless of its drawing-buffer size,
+     so we can resize the renderer (e.g. to 512 for atlas export) without
+     visually shrinking the preview. */
+  #ttSlot canvas { width: 100% !important; height: 100% !important; display: block; }
+  #ttModal .controls { width: 240px; display: flex; flex-direction: column; min-width: 0; }
+  #ttModal .controls .row { display: flex; align-items: center; gap: 6px; margin: 5px 0; min-width: 0; }
+  #ttModal .controls label { font-size: 10px; color: #999; min-width: 80px; flex-shrink: 0; }
+  #ttModal .controls input[type=range] { flex: 1 1 0; min-width: 0; width: 0; }
+  #ttModal .controls .val { font-size: 11px; color: #fff; min-width: 64px; max-width: 64px; text-align: right; font-weight: 600; flex-shrink: 0; }
+  #ttModal .controls input.val { background: #141414; border: 1px solid #2a2a2a; border-radius: 3px; padding: 1px 4px; font-family: inherit; -moz-appearance: textfield; }
+  #ttModal .controls input.val:focus { outline: none; border-color: #1878e0; }
+  #ttModal .controls input.val::-webkit-inner-spin-button,
+  #ttModal .controls input.val::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  #ttStatus { font-size: 10px; color: #888; margin-top: 10px; line-height: 1.5; }
+  #ttPause { margin-top: 8px; }
+</style>
+</head><body>
+<canvas id="c"></canvas>
+<a href="/" style="position:fixed;top:16px;left:16px;z-index:10;font:11px/1 monospace;color:#a1a1aa;text-decoration:none;background:rgba(10,10,15,0.92);border:1px solid #27272a;border-radius:6px;padding:7px 10px;backdrop-filter:blur(8px);">&larr; Index</a>
+<div id="ui">
+  <h2>Opal Path Tracer</h2>
+  <div class="row"><label>Preset</label><select id="preset">
+    <option value="black">Black Opal</option>
+    <option value="white">White Opal</option>
+    <option value="crystal">Crystal Opal</option>
+    <option value="fire">Fire Opal</option>
+  </select></div>
+  <div class="row"><label>Sphere d</label><input type="range" id="diam" min="30" max="1500" value="280" step="1"><input class="val" id="diamV" type="number" min="30" max="1500" step="1" value="280"></div>
+  <div class="row"><label>Domain Scale</label><input type="range" id="grain" min="1" max="64" value="24" step="1"><input class="val" id="grainV" type="number" min="1" max="64" step="1" value="24"></div>
+  <div class="row"><label>Percolation</label><input type="range" id="perc" min="0" max="99" value="42" step="1"><input class="val" id="percV" type="number" min="0" max="0.99" step="0.01" value="0.42"></div>
+  <div class="row"><label>Body Tone</label><input type="range" id="tone" min="0" max="100" value="45" step="1"><input class="val" id="toneV" type="number" min="0" max="1" step="0.01" value="0.45"></div>
+  <div class="row"><label>Bounces</label><input type="range" id="bounces" min="1" max="512" value="12" step="1"><input class="val" id="bouncesV" type="number" min="1" max="512" step="1" value="12"></div>
+  <div class="row"><label>Laue σ²</label><input type="range" id="laue" min="1" max="15" value="3" step="1"><input class="val" id="laueV" type="number" min="0.001" max="0.015" step="0.001" value="0.003"></div>
+  <div class="row"><label>Env bright</label><input type="range" id="envInt" min="0" max="500" value="10" step="1"><input class="val" id="envIntV" type="number" min="0" max="5" step="0.01" value="0.10"></div>
+  <div class="row"><label>Vol scatter</label><input type="range" id="volScat" min="0" max="200" value="3" step="1"><input class="val" id="volScatV" type="number" min="0" max="200" step="1" value="3"></div>
+  <div class="row" style="margin-top:10px;gap:6px;">
+    <button id="pauseBtn" class="opbtn" style="flex:1 1 0;">Pause</button>
+    <button id="ttOpen" class="opbtn" style="flex:1 1 0;">Open Turntable</button>
+  </div>
+  <div class="row" style="margin-top:6px;gap:6px;">
+    <button id="settingsCopy" class="opbtn" style="flex:1 1 0;">Copy</button>
+    <button id="settingsPaste" class="opbtn" style="flex:1 1 0;">Paste</button>
+  </div>
+</div>
+<div id="info">samples: <span id="scount">0</span> | grains: <span id="gcount">-</span> <span id="bakeStatus" style="color:#e08818"></span></div>
+
+<div id="ttModal">
+  <div class="backdrop"></div>
+  <div class="panel">
+    <div>
+      <div class="head"><span class="title">Turntable</span></div>
+      <div id="ttSlot"></div>
+    </div>
+    <div class="controls">
+      <div class="head"><span class="title">Settings</span><button class="close" id="ttClose">×</button></div>
+      <div class="row"><label>Angles</label><input type="range" id="ttAngles" min="4" max="720" value="72" step="1"><input class="val" id="ttAnglesV" type="number" min="4" max="720" step="1" value="72"></div>
+      <div class="row"><label>Samples / angle</label><input type="range" id="ttSpa" min="1" max="65536" value="128" step="1"><input class="val" id="ttSpaV" type="number" min="1" max="65536" step="1" value="128"></div>
+      <div class="row"><label>Distance</label><input type="range" id="ttDist" min="50" max="2000" value="270" step="1"><input class="val" id="ttDistV" type="number" min="0.5" max="20" step="0.01" value="2.70"></div>
+      <button id="ttPause" class="opbtn">Pause</button>
+      <div id="ttStatus">angle 1/72 · sample 0/128</div>
+      <hr style="border:none;border-top:1px solid #27272a;margin:12px 0 8px;">
+      <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#888;margin-bottom:6px;">Atlas Export</div>
+      <div class="row"><label>Atlas cols</label><input type="range" id="ttCols" min="1" max="72" value="12" step="1"><input class="val" id="ttColsV" type="number" min="1" max="72" step="1" value="12"></div>
+      <div class="row"><label>Frame size</label><input type="range" id="ttFrameSz" min="64" max="4096" value="512" step="1"><input class="val" id="ttFrameSzV" type="number" min="64" max="4096" step="1" value="512"></div>
+      <div class="row"><label>Format</label>
+        <select id="ttFormat" style="flex:1;background:#141414;color:#f0ece0;border:1px solid #2a2a2a;padding:3px 6px;font:inherit;">
+          <option value="webp" selected>WebP</option>
+          <option value="jpeg">JPG</option>
+        </select>
+      </div>
+      <div class="row"><label>Quality</label><input type="range" id="ttJpegQ" min="1" max="100" value="90" step="1"><span class="val" id="ttJpegQV">90</span></div>
+      <div class="row" style="font-size:10px;color:#666;">
+        <span id="ttAtlasInfo">12 × 6 · 6144 × 3072 px</span>
+      </div>
+      <button id="ttExport" class="opbtn" style="margin-top:6px;">Export Atlas</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Setup (identical to glass-test) ──
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+renderer.autoClear = false;
+
+const cam = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.01, 50);
+cam.position.set(0, 0.3, 3.0);
+const controls = new OrbitControls(cam, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+
+// ── CIE wavelength → XYZ LUT (no sRGB clamping — accumulate in XYZ) ──
+function buildWavelengthLUT() {
+  const N = 512, data = new Float32Array(N * 4);
+  for (let i = 0; i < N; i++) {
+    const lam = 380 + (i / (N - 1)) * 400;
+    const t1=(lam-442)*((lam<442)?0.0624:0.0374), t2=(lam-599.8)*((lam<599.8)?0.0264:0.0323);
+    const t3=(lam-474)*((lam<474)?0.0845:0.04), t4=(lam-568.8)*((lam<568.8)?0.0213:0.0247);
+    const t5=(lam-530.9)*((lam<530.9)?0.0838:0.0322);
+    const x = 0.362*Math.exp(-0.5*t1*t1)+1.056*Math.exp(-0.5*t2*t2)-0.065*Math.exp(-0.5*t3*t3);
+    const y = 0.821*Math.exp(-0.5*t4*t4)+0.286*Math.exp(-0.5*t5*t5);
+    const t6=(lam-437)*((lam<437)?0.0845:0.0278), t7=(lam-459)*((lam<459)?0.0385:0.0725);
+    const z = 1.217*Math.exp(-0.5*t6*t6)+0.681*Math.exp(-0.5*t7*t7);
+    // Store CIE XYZ directly — all non-negative, no clamping bias
+    data[i*4]   = x;
+    data[i*4+1] = y;
+    data[i*4+2] = z;
+    data[i*4+3] = 1;
+  }
+  return data;
+}
+const colorLUT = new THREE.DataTexture(buildWavelengthLUT(), 512, 1, THREE.RGBAFormat, THREE.FloatType);
+colorLUT.minFilter = THREE.LinearFilter; colorLUT.magFilter = THREE.LinearFilter;
+colorLUT.wrapS = THREE.ClampToEdgeWrapping; colorLUT.needsUpdate = true;
+
+// ── Reciprocal lattice G vectors (precomputed, crystal-local frame) ──
+const MAX_G = 32;
+function precomputeG(d_nm) {
+  const inv = 1.0 / (d_nm * Math.SQRT2);
+  const aS = [inv, inv, -inv], bS = [-inv, inv, inv], cS = [inv, -inv, inv];
+  const limitR = 2.0 * 1.35 / 380;
+  const vecs = [];
+  for (let h = -3; h <= 3; h++)
+  for (let k = -3; k <= 3; k++)
+  for (let l = -3; l <= 3; l++) {
+    if (!h && !k && !l) continue;
+    const gx = h*aS[0]+k*bS[0]+l*cS[0], gy = h*aS[1]+k*bS[1]+l*cS[1], gz = h*aS[2]+k*bS[2]+l*cS[2];
+    const gl = Math.sqrt(gx*gx+gy*gy+gz*gz);
+    if (gl < limitR) vecs.push([gx, gy, gz, gl]);
+  }
+  vecs.sort((a,b) => a[3]-b[3]);
+  const n = Math.min(vecs.length, MAX_G);
+  const data = new Float32Array(MAX_G * 4);
+  for (let i = 0; i < n; i++) { data[i*4]=vecs[i][0]; data[i*4+1]=vecs[i][1]; data[i*4+2]=vecs[i][2]; data[i*4+3]=vecs[i][3]; }
+  const tex = new THREE.DataTexture(data, MAX_G, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter; tex.needsUpdate = true;
+  return { tex, count: n };
+}
+let gTex = precomputeG(280);
+
+// ── Cell textures + codebook ──
+// Opal body shape: isotropic sphere. Previously an oblate cabochon (0.8 ×
+// 0.8 × 0.4) which gave visually striking broad faces but left the side-on
+// equatorial turntable angles nearly black because the thin Z dimension has
+// almost no Bragg-active volume along that ray direction. A sphere gives
+// uniform Bragg coverage across every viewpoint so no frame is intrinsically
+// dark.
+const SHAPE_R = [0.80, 0.80, 0.80];
+let siteTex = null, grainTex = null, codebookTex = null;
+
+const bakeWorker = new Worker(new URL('./src/opal-volume-worker.js', import.meta.url), { type: 'module' });
+let baking = false;
+// Queue-of-1: if a rebake is requested while one is in flight, stash the
+// latest params here and kick it off when the current one finishes. Without
+// this, the previous "if (baking) return;" silently dropped requests, which
+// caused the headless turntable driver to declare grains "stable" before the
+// real bake had finished — leaving the first 1-2 frames rendered against the
+// PREVIOUS preset's grains. The race is: applyPreset fires an immediate
+// rebake AND the slider's debounced sched() fires another, the second gets
+// dropped, the driver polls gcount which still shows the old value during
+// the in-flight bake, the new bake finishes mid-export and resetAccum's the
+// frames already in progress.
+let pendingBake = null;
+// Bake generation counter — bumped each time applyBakeResult fires. The
+// turntable driver can poll this to ensure it has waited through every
+// pending rebake before starting capture.
+let bakeGeneration = 0;
+
+function applyBakeResult(result) {
+  const S = result.stride;
+  document.getElementById('gcount').textContent = result.grainCount;
+
+  if (siteTex) siteTex.dispose();
+  siteTex = new THREE.Data3DTexture(result.siteData, S, S, S);
+  siteTex.format = THREE.RGBAFormat; siteTex.type = THREE.FloatType;
+  siteTex.minFilter = THREE.NearestFilter; siteTex.magFilter = THREE.NearestFilter;
+  siteTex.wrapS = siteTex.wrapT = siteTex.wrapR = THREE.ClampToEdgeWrapping;
+  siteTex.needsUpdate = true;
+
+  if (grainTex) grainTex.dispose();
+  grainTex = new THREE.Data3DTexture(result.grainData, S, S, S);
+  grainTex.format = THREE.RGBAFormat; grainTex.type = THREE.UnsignedByteType;
+  grainTex.minFilter = THREE.NearestFilter; grainTex.magFilter = THREE.NearestFilter;
+  grainTex.wrapS = grainTex.wrapT = grainTex.wrapR = THREE.ClampToEdgeWrapping;
+  grainTex.needsUpdate = true;
+
+  if (codebookTex) codebookTex.dispose();
+  const cb = new Float32Array(Math.max(result.grainCount,1)*4);
+  cb.set(result.codebook.subarray(0, result.grainCount*4));
+  codebookTex = new THREE.DataTexture(cb, result.grainCount||1, 1, THREE.RGBAFormat, THREE.FloatType);
+  codebookTex.minFilter = THREE.NearestFilter; codebookTex.magFilter = THREE.NearestFilter;
+  codebookTex.needsUpdate = true;
+
+  if (ptMat) {
+    ptMat.uniforms.uSiteTex.value = siteTex;
+    ptMat.uniforms.uGrainTex.value = grainTex;
+    ptMat.uniforms.uCodebook.value = codebookTex;
+    ptMat.uniforms.uGrainCount.value = result.grainCount;
+    ptMat.uniforms.uCellOffset.value = result.offset;
+    ptMat.uniforms.uCellStride.value = S;
+    resetAccum();
+  }
+  baking = false;
+  bakeGeneration++;
+  window.__bakeGeneration = bakeGeneration;
+  window.__baking = false;
+  window.__pendingBake = pendingBake;
+  document.getElementById('bakeStatus').textContent = '';
+  // Drain the queue: if a rebake was requested while we were busy, run it
+  // now so we always converge to the latest params.
+  if (pendingBake) {
+    const next = pendingBake;
+    pendingBake = null;
+    window.__pendingBake = null;
+    rebakeVolume(0, next.scale, next.perc);
+  }
+}
+
+bakeWorker.onmessage = (e) => applyBakeResult(e.data);
+
+function rebakeVolume(res, scale, perc) {
+  if (baking) {
+    // Coalesce — only the LATEST request matters. Earlier pending requests
+    // are stale and would just produce a flash of intermediate state.
+    pendingBake = { scale, perc };
+    window.__pendingBake = pendingBake;
+    return;
+  }
+  baking = true;
+  window.__baking = true;
+  document.getElementById('bakeStatus').textContent = 'baking...';
+  bakeWorker.postMessage({ scale, perc, noiseFreq: 0.35, noiseAmp: 0.25 });
+}
+
+// ── Accumulation ──
+let accumTarget = [
+  new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.FloatType, format: THREE.RGBAFormat }),
+  new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.FloatType, format: THREE.RGBAFormat }),
+];
+let sampleCount = 0;
+function resetAccum() {
+  sampleCount = 0;
+  renderer.setRenderTarget(accumTarget[0]); renderer.clear();
+  renderer.setRenderTarget(accumTarget[1]); renderer.clear();
+  renderer.setRenderTarget(null);
+}
+
+// ── Shader ──
+const ptVert = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`;
+
+const ptFrag = `
+precision highp float;
+precision highp sampler3D;
+
+uniform sampler3D uSiteTex;
+uniform sampler3D uGrainTex;
+uniform sampler2D uCodebook;
+uniform sampler2D uGVectors;
+uniform sampler2D uColorLUT;
+uniform sampler2D uAccum;
+uniform vec2 uResolution;
+uniform mat4 uCamInvProj, uCamInvView;
+uniform vec3 uCamPos;
+uniform float uFrame, uSampleCount;
+uniform float uDiameter, uBodyTone, uGrainCount;
+uniform float uDomainScale, uCellOffset, uCellStride;
+uniform float uLaueSigma2;   // width² of Ewald miss Gaussian — wider = frames slide between angles
+uniform float uEnvIntensity; // scalar multiplier on the hemisphere environment
+uniform float uVolScatter;   // volumetric Bragg scatter coefficient (1/length), >0 enables
+uniform int uMaxBounces, uGVecCount;
+varying vec2 vUv;
+
+const float PI = 3.14159265;
+// N_GLASS used to be 1.45 (the silica/air boundary). With that boundary
+// in place, every Bragg-scattered ray that hit the inside of the surface
+// at >critAngle (~43.6°) was totally internally reflected back into the
+// gem, where it kept Bragg-scattering and accumulating wavelength bias
+// across many TIR bounces. The faces that geometrically connected to
+// env-key directions ended up dominated by long wavelengths (Bragg has
+// fewer firing G-vectors at long lam, so red/yellow rays survive TIR
+// chains better) and showed warm glare. Setting N_GLASS = 1.0 removes
+// the Fresnel boundary entirely: rays enter and exit the gem freely,
+// no TIR, no rim trapping. The internal Bragg multi-layer Fresnel uses
+// its own N_SILICA / N_WATER constants inside ewaldDiffract — those are
+// untouched, so the per-grain Bragg color is unchanged.
+const float N_GLASS = 1.00;
+const float N_EFF = 1.35;
+// Cabochon semi-axes (oblate spheroid centered at origin).
+const vec3 SHAPE_R = vec3(${SHAPE_R.map(v => v.toFixed(2)).join(', ')});
+// Glass-coating shell. Real opal cabochons are polished silica with the
+// photonic crystal structure sitting a few tens of microns below the
+// surface — the outermost layer is clear glass, not active crystal. We
+// model this by declaring a Bragg-active inner ellipsoid at SHELL_R·SHAPE_R
+// in shape-normalized space; rays between SHELL_R and 1 just
+// refract and absorb like plain glass, so the silhouette never fires Bragg
+// at the geometry where the surface normal clashes hardest with the crystal
+// orientation. Without this shell the rim reads as a noisy rainbow glare
+// that real opals do not have. SHELL2 is the squared radius for the
+// dot(q,q) < SHELL2 test so we avoid a sqrt per sample.
+// SHELL2 used to gate a passive glass coating around the active Bragg
+// zone, but with N_GLASS = 1.0 there is no glass shell to model — the
+// gem is now uniform Bragg material from the surface inward. Setting
+// SHELL2 > 1 disables the test (dot(q,q) is always ≤ 1 inside the
+// ellipsoid), so the shell-skip branch never runs and Bragg fires
+// everywhere. The MIN_ACTIVE_MARCH guard below still prevents rim
+// glare from grazing chords.
+const float SHELL2 = 1.01;
+// Minimum chord length a ray must travel inside the active (Bragg) zone
+// before any boundary or volumetric Bragg event is allowed to fire. Without
+// this guard, primary rays that graze the silhouette refract in, march a
+// few mm of active material, and hit one Voronoi boundary near the surface.
+// That single near-surface Bragg pick is wavelength-dependent (long λ have
+// fewer firing G-vectors, so red/yellow rays survive more often than blue),
+// and integrated over the rim it produces a smooth warm-to-cool chromatic
+// glare that reads exactly like oil/dispersion — not opal. Forcing each
+// active-zone leg to traverse at least MIN_ACTIVE_MARCH of straight glass
+// before scattering kills that grazing artifact while leaving deeper
+// interior play-of-color completely intact.
+const float MIN_ACTIVE_MARCH = 0.05;
+
+// ── RNG ──
+uint rngState;
+void rngSeed(vec2 p, float f) { rngState = uint(p.x)*1973u + uint(p.y)*9277u + uint(f)*26699u + 1u; }
+float rand() {
+  rngState = rngState*747796405u + 2891336453u;
+  uint w = ((rngState >> ((rngState >> 28u)+4u)) ^ rngState) * 277803737u;
+  return float((w >> 22u) ^ w) / 4294967295.0;
+}
+
+// ── Fresnel ──
+float fresnel(float cosI, float n1, float n2) {
+  float sinT2 = (n1/n2)*(n1/n2)*(1.0-cosI*cosI);
+  if (sinT2 > 1.0) return 1.0;
+  float cosT = sqrt(1.0-sinT2);
+  float rs = (n1*cosI-n2*cosT)/(n1*cosI+n2*cosT);
+  float rp = (n2*cosI-n1*cosT)/(n2*cosI+n1*cosT);
+  return 0.5*(rs*rs+rp*rp);
+}
+
+vec3 refractVec(vec3 I, vec3 N, float eta) {
+  float cI = dot(-I, N);
+  float sinT2 = eta*eta*(1.0-cI*cI);
+  if (sinT2 > 1.0) return reflect(I, N);
+  return eta*I + (eta*cI - sqrt(1.0-sinT2))*N;
+}
+
+// ── Cabochon (ellipsoid) / ground intersection ──
+// Ray-ellipsoid: transform ray into the unit-sphere frame by component-wise
+// division by SHAPE_R, intersect, return parameters in *world* space (the
+// quadratic in the transformed frame uses the same t since we divide both ro
+// and rd, so the world t falls out directly).
+vec2 hitOpal(vec3 ro, vec3 rd) {
+  vec3 ros = ro / SHAPE_R;
+  vec3 rds = rd / SHAPE_R;
+  float a = dot(rds, rds);
+  float b = dot(ros, rds);
+  float c = dot(ros, ros) - 1.0;
+  float disc = b*b - a*c;
+  if (disc < 0.0) return vec2(-1.0);
+  float sq = sqrt(disc);
+  return vec2((-b-sq)/a, (-b+sq)/a);
+}
+// Outward unit normal at point p on the ellipsoid surface.
+// Gradient of (p/R).(p/R) is 2*p/R^2 → normalize.
+vec3 opalNormal(vec3 p) { return normalize(p / (SHAPE_R*SHAPE_R)); }
+
+float hitGround(vec3 ro, vec3 rd) {
+  if (abs(rd.y) < 1e-6) return -1.0;
+  float t = (-0.8 - ro.y) / rd.y;
+  return t > 0.0 ? t : -1.0;
+}
+
+vec3 groundColor(vec3 p) {
+  float ch = mod(floor(p.x*2.0)+floor(p.z*2.0), 2.0);
+  return mix(vec3(0.3), vec3(0.7), ch);
+}
+
+// Internal lighting only — used by rays sampling the environment after they
+// have already entered/scattered inside the opal. Camera-primary rays that
+// miss the opal return pure black (handled in trace()).
+//
+// Multi-key symmetric rig. Previous iteration used a single narrow key
+// at (0.4, 0.7, 0.5) to avoid broadband sky contamination of the Bragg
+// filter, but that left the opposite hemisphere nearly black on
+// turntable orbits. The fix is not to widen one lobe (which brings back
+// the broadband wash that drowned iridescence) but to add MORE narrow
+// lobes: 4 cardinal keys at ~45° elevation + 1 overhead. Each key keeps
+// the original pow-10 sharpness (~36° FWHM), so any Bragg scatter that
+// lands on a key carries a clean spectral sample — averaging many sharp
+// lights is not the same as one diffuse ambient. Total hemispheric
+// coverage means every camera angle finds energy, and every domain
+// scatters into at least one key lobe.
+//
+// A tiny dir.y-weighted fill remains so non-key directions aren't
+// absolutely black (useful for the opal silhouette to still read as a
+// physical object), still ~1:50 below the key peak so spectral
+// selection dominates. Output is a scalar brightness returned as vec3
+// so the CIE wavelength weighting applied outside trace() isn't
+// contaminated by environment hue.
+vec3 environment(vec3 dir) {
+  // 4 cardinal ring keys at 45° elevation (unit vectors, cos/sin 45° = 0.7071)
+  // plus 1 straight overhead. Each lobe stays narrow — pow 10 ≈ 36° FWHM.
+  const float R = 0.7071;
+  float keys = 0.0;
+  keys += pow(max(dot(dir, vec3( R, R,  0.0)), 0.0), 10.0);
+  keys += pow(max(dot(dir, vec3(-R, R,  0.0)), 0.0), 10.0);
+  keys += pow(max(dot(dir, vec3( 0.0, R,  R)), 0.0), 10.0);
+  keys += pow(max(dot(dir, vec3( 0.0, R, -R)), 0.0), 10.0);
+  keys += pow(max(dot(dir, vec3( 0.0, 1.0, 0.0)), 0.0), 10.0);
+  keys *= 4.0;  // per-key peak matches the old single-key peak so any
+                // camera angle sees the SAME brightness the old hot side
+                // did — no per-direction dimming, just more directions.
+
+  // Dim hemispheric fill so the silhouette isn't literal black.
+  float fill = 0.04 * (0.5 + 0.5 * dir.y);
+  return vec3(keys + fill) * uEnvIntensity;
+}
+
+// ── Wavelength → CIE XYZ ──
+vec3 wl2xyz(float lam) {
+  float t = clamp((lam - 380.0) / 400.0, 0.0, 1.0);
+  return texture2D(uColorLUT, vec2(t, 0.5)).rgb;
+}
+
+// ── Quaternion rotate ──
+vec3 qrot(vec4 q, vec3 v) { vec3 t = 2.0*cross(q.xyz, v); return v + q.w*t + cross(q.xyz, t); }
+
+// ── Analytical Voronoi lookup ──
+// Evaluates exact weighted Voronoi at any world position using pre-baked cell textures.
+// No voxel quantization — boundaries are pixel-perfect smooth curves.
+int getGrainID(vec3 p) {
+  vec3 q = p / SHAPE_R;                    // shape-normalized position
+  if (dot(q, q) > 1.0) return -1;          // outside the cabochon
+  vec3 dp = q * uDomainScale;              // domain-space position (anisotropic Voronoi)
+  vec3 ci = floor(dp);
+  vec3 f = dp - ci;
+  int off = int(uCellOffset);
+  int stride = int(uCellStride);
+
+  float bestDist = 1e9;
+  ivec3 bestCell = ivec3(0);
+
+  for (int dx = -1; dx <= 1; dx++)
+  for (int dy = -1; dy <= 1; dy++)
+  for (int dz = -1; dz <= 1; dz++) {
+    ivec3 cc = ivec3(ci) + ivec3(dx, dy, dz) + off;
+    if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(stride)))) continue;
+    vec4 site = texelFetch(uSiteTex, cc, 0);
+    vec3 delta = vec3(dx, dy, dz) + site.xyz - f;
+    float dist = length(delta) - site.w;  // weighted Voronoi
+    if (dist < bestDist) { bestDist = dist; bestCell = cc; }
+  }
+
+  vec4 gid = texelFetch(uGrainTex, bestCell, 0);
+  if (gid.a < 0.5) return -1;
+  return int(gid.r * 255.0 + 0.5) + int(gid.g * 255.0 + 0.5) * 256;
+}
+
+vec4 getQuat(int id) {
+  return texture2D(uCodebook, vec2((float(id)+0.5)/uGrainCount, 0.5));
+}
+
+// ── Ewald diffraction with Laue N² constructive interference (Yokota 2025) ──
+// At a grain boundary, checks which G_hkl satisfy the Ewald condition and
+// reservoir-samples ONE direction proportional to Laue × multi-layer Fresnel.
+// Single-G picking (rather than summing all firing G) is essential:
+//   (1) Adjacent pixels at slightly different view angles stochastically
+//       resolve to *different* G_hkl, which is what produces the visible
+//       color gradient across a grain. Summing across all G blurs that
+//       gradient into a flat average color (see commit 10e956a revert).
+//   (2) It keeps per-boundary energy bounded by max(w_i) in expectation
+//       instead of Σ(w_i), so bright boundaries don't blow past the tonemap.
+// Reflectance uses Fresnel at half-scattering-angle × multi-layer enhancement:
+//   R_eff = tanh²(N · sqrt(R_single))  where N ~ 20 crystal layers.
+// This gives the bright "glow" of constructive interference in ordered domains.
+vec3 ewaldDiffract(vec3 wi, float lam, vec4 quat, out float prob, out float totalOut) {
+  float loN = lam / N_EFF;
+  float limitR = 2.0 * N_EFF / lam;
+  vec3 bestDir = vec3(0.0);
+  float totalW = 0.0;
+  const float N_LAYERS = 20.0;       // effective crystal layers per domain
+  const float N_SILICA = 1.45;
+  const float N_WATER  = 1.33;
+
+  for (int i = 0; i < 32; i++) {
+    if (i >= uGVecCount) break;
+    vec4 gd = texture2D(uGVectors, vec2((float(i)+0.5)/32.0, 0.5));
+    if (gd.w > limitR) continue;
+
+    vec3 Gw = qrot(quat, gd.xyz);
+    vec3 wo = wi + loN * Gw;
+    float woLen = length(wo);
+    float miss = abs(woLen - 1.0);
+
+    // Laue envelope: sharp Gaussian approximation of sin²(Nπx)/sin²(πx) main lobe.
+    // Wider σ² lets more G-vectors contribute per angle, so the color field
+    // slides smoothly between neighbouring camera angles instead of hopping.
+    float laue = exp(-0.5 * miss*miss / uLaueSigma2);
+    if (laue < 0.01) continue;
+
+    // Half-scattering-angle Fresnel (Yokota Sec 5.3.2, p.46)
+    float cos2th = dot(wi, wo / woLen);           // cos(2θ)
+    float cosTh  = sqrt(0.5 + 0.5 * cos2th);     // cos(θ) via half-angle
+    float rSingle = fresnel(max(cosTh, 0.01), N_WATER, N_SILICA);
+
+    // Multi-layer constructive interference: R_eff = tanh²(N · √R_single)
+    float rEff = pow(tanh(N_LAYERS * sqrt(rSingle)), 2.0);
+
+    float w = laue * rEff;
+    if (w < 0.001) continue;
+
+    totalW += w;
+    // Reservoir sampling: keep one candidate proportional to weight
+    if (rand() * totalW < w) bestDir = normalize(wo);
+  }
+
+  totalOut = totalW;
+  prob = min(totalW, 0.95);
+  return bestDir;
+}
+
+// ── Main trace ──
+vec3 trace(vec3 ro, vec3 rd, float lam) {
+  vec3 throughput = vec3(1.0);
+  vec3 pos = ro;
+  vec3 dir = rd;
+  bool insideOpal = false;
+  bool touched   = false;     // has the path interacted with the opal yet?
+  int curGrain = -1;
+
+  for (int bounce = 0; bounce < 32; bounce++) {
+    if (bounce >= uMaxBounces) break;
+
+    if (!insideOpal) {
+      // ── Outside: only the cabochon exists; no ground, no sky backdrop ──
+      vec2 tS = hitOpal(pos, dir);
+
+      if (tS.x < 0.001) {
+        // Camera-primary rays that miss the opal show pure black, so the
+        // cabochon floats on a black background. Secondary rays (those that
+        // entered/scattered) still see environment lighting on exit, so the
+        // opal interior is properly lit.
+        return touched ? throughput * environment(dir) : vec3(0.0);
+      }
+
+      // Hit opal surface — Fresnel
+      vec3 hitP = pos + dir * tS.x;
+      vec3 N = opalNormal(hitP);
+      float cosI = abs(dot(-dir, N));
+      float F = fresnel(cosI, 1.0, N_GLASS);
+      touched = true;
+
+      if (rand() < F) {
+        dir = reflect(dir, N);
+        pos = hitP + dir * 0.001;
+        // stay outside, continue bouncing
+      } else {
+        dir = refractVec(dir, N, 1.0 / N_GLASS);
+        pos = hitP + dir * 0.002;
+        insideOpal = true;
+        // Start with curGrain = -1 — we are in the glass shell, not a
+        // crystal grain yet. The inside march will pick up the first
+        // active-zone grain once the ray has travelled through the coating.
+        curGrain = -1;
+        // Don't tint throughput here — glass matrix is colorless.
+        // Spectral color only applied when diffraction occurs.
+      }
+
+    } else {
+      // ── Inside opal: march with analytical Voronoi, scatter at BOTH
+      //    Voronoi boundaries AND volumetrically within each domain ──
+      //
+      // Two complementary mechanisms:
+      //   (a) BOUNDARY scatter. Bisect to find the exact analytical Voronoi
+      //       interface between two grains, then do one reservoir-sampled
+      //       Ewald pick using the current grain's quaternion. This is the
+      //       dominant mechanism at high domain scale (small cells → many
+      //       boundaries per ray) and produces the crisp play-of-color
+      //       speckle pattern.
+      //   (b) VOLUMETRIC scatter. At each march step inside a single domain,
+      //       probe the Ewald condition and scatter with probability
+      //         p_step = 1 - exp(-σ_vol · totalBraggW · stepSz)
+      //       where totalBraggW is the sum of Laue × Fresnel over firing G.
+      //       This is negligible at high scale (few steps per cell before a
+      //       boundary is hit) but dominates at low scale, where a single
+      //       cell can span a large fraction of the opal. Without it, large
+      //       cells render as flat Voronoi facets (one boundary event per
+      //       path ≈ one dominant hue per cell).
+      //
+      // The two coexist: set uVolScatter → 0 to recover the pure-boundary
+      // behaviour; σ_vol ~ 3 gives a gentle blur at scale=24 and properly
+      // smooths the color field at scale=4.
+      // Analytical exit distance: the signed interval from hitOpal is
+      // [t_near < 0, t_far > 0] while we're inside, so t_far is the exact
+      // world-space distance along dir to the cabochon surface. Clamping
+      // the final march step to this value guarantees pos lands *exactly*
+      // on the silhouette — no overshoot, no wrong-side opalNormal — so
+      // grazing rays refract cleanly instead of firing PBR-like noise.
+      float tExit = hitOpal(pos, dir).y;
+      float stepSz = 0.012;
+      float marched = 0.0;
+      // activeMarch counts only distance travelled inside the Bragg-active
+      // zone (NOT the glass shell), reset at the start of every leg. It
+      // gates Bragg events so that grazing primary rays whose entire active
+      // chord is shorter than MIN_ACTIVE_MARCH never fire a wavelength
+      // pick — they exit dark, the way real opal silhouettes look.
+      float activeMarch = 0.0;
+      // braggGate is smoothstep(0, MIN_ACTIVE_MARCH, activeMarch) captured at
+      // the moment a boundary break fires. Multiplied into bProb in the
+      // post-loop handler so short grazing chords scatter with REDUCED (not
+      // zero) probability — this keeps the rim dimmed instead of punched out
+      // as a "hidden" silhouette band, which the hard >= gate was producing.
+      float braggGate = 1.0;
+      bool exited = tExit <= 0.0;
+      bool hitBoundary = false;
+      bool volScattered = false;
+
+      for (int s = 0; s < 150; s++) {
+        if (exited) break;
+        // Clamp the final step so pos lands on the analytical surface
+        // instead of stepping past it. This is the "proper intersection
+        // algo" — the volume march terminates on the true ellipsoid.
+        float rem = tExit - marched;
+        if (rem <= stepSz) {
+          pos = pos + dir * rem;
+          exited = true;
+          break;
+        }
+        vec3 nextPos = pos + dir * stepSz;
+
+        // Glass-coating shell: outside the inner SHELL2 ellipsoid the
+        // material is amorphous silica, not active crystal. Skip the grain
+        // lookup, skip boundary bisection, skip Bragg — just absorb (lightly)
+        // and continue marching. This gives the silhouette a clean glass
+        // read instead of a rainbow glare.
+        vec3 qNext = nextPos / SHAPE_R;
+        if (dot(qNext, qNext) > SHELL2) {
+          pos = nextPos;
+          marched += stepSz;
+          curGrain = -1; // leaving / not yet in a crystal grain
+          continue;
+        }
+
+        int g = getGrainID(nextPos);
+        if (g < 0) {
+          // Numerical edge: sample fell outside the cabochon despite the
+          // tExit clamp. Land at the analytical surface instead of nextPos
+          // so opalNormal stays valid.
+          pos = pos + dir * rem;
+          exited = true;
+          break;
+        }
+
+        // Boundary bisection. The curGrain >= 0 guard skips the first-entry
+        // step (curGrain is -1 when the ray just entered the active zone from
+        // the glass shell or from the exterior). The old code special-cased
+        // first-entry with its own branch and a hard activeMarch gate; both
+        // are gone now — the fall-through below sets curGrain, runs absorption
+        // + vol probe, and the boundary event waits until a real grain→grain
+        // transition in a subsequent iteration.
+        if (g != curGrain && curGrain >= 0) {
+          vec3 lo = pos, hi = nextPos;
+          for (int b = 0; b < 10; b++) {
+            vec3 mid = 0.5 * (lo + hi);
+            int mID = getGrainID(mid);
+            if (mID == curGrain || mID < 0) lo = mid; else hi = mid;
+          }
+          pos = 0.5 * (lo + hi);
+          curGrain = g;
+          hitBoundary = true;
+          // Soft chord gate. At short active-chord depths the boundary still
+          // fires its Ewald reservoir pick, but with a smoothly ramped
+          // probability — see the comment where braggGate is declared.
+          braggGate = smoothstep(0.0, MIN_ACTIVE_MARCH, activeMarch);
+          break;
+        }
+        if (g >= 0) curGrain = g;
+
+        pos = nextPos;
+        marched += stepSz;
+        activeMarch += stepSz;
+
+        // Absorption along step. Two terms:
+        //   (a) the user-controlled body tone, broadband (RGB-uniform via
+        //       sigA scalar), goes from a thin "clear glass" floor up to
+        //       a near-opaque "black opal body" at uBodyTone=1.
+        //   (b) a wavelength-dependent compensation term that absorbs
+        //       long wavelengths MORE per unit chord. This counteracts
+        //       Bragg's intrinsic spectral asymmetry: long wavelengths
+        //       see fewer firing G-vectors in ewaldDiffract (limitR =
+        //       2·N_EFF/lam shrinks with lam), so red/yellow rays
+        //       propagate cleanly through the gem and dominate any pixel
+        //       that has a direct geometric path to an env light.
+        //       Without (b), every face of the gem that points at a key
+        //       develops a warm yellow/red cast, because the surviving
+        //       throughput at those pixels is biased toward long lam.
+        //       The 1.5 · lamN² ramp gives ~0 absorption at 380 nm and
+        //       ~1.5 absorption at 780 nm, which is enough over a
+        //       typical chord (~1-3 units) to flatten the bias and let
+        //       the per-grain Bragg flashes be the only chromatic signal.
+        float lamN = (lam - 380.0) / 400.0;
+        float sigA = mix(0.02, 4.0, uBodyTone) + 1.5 * lamN * lamN;
+        throughput *= exp(-vec3(sigA) * stepSz);
+        if (max(max(throughput.r, throughput.g), throughput.b) < 0.005) return vec3(0.0);
+
+        // Volumetric Bragg probe. Skip the texelFetch storm when σ_vol=0.
+        // Soft chord gate (same smoothstep as the boundary path) — short
+        // grazing rays inside their first few steps fire with reduced
+        // probability rather than being silenced entirely.
+        float vGate = smoothstep(0.0, MIN_ACTIVE_MARCH, activeMarch);
+        if (uVolScatter > 0.0001 && curGrain >= 0 && vGate > 0.001) {
+          vec4 vQuat = getQuat(curGrain);
+          float vProb, vTotal;
+          vec3 vDir = ewaldDiffract(dir, lam, vQuat, vProb, vTotal);
+          if (vTotal > 0.0) {
+            float pScat = 1.0 - exp(-uVolScatter * vTotal * stepSz);
+            if (vProb > 0.0 && rand() < pScat * vGate) {
+              dir = vDir;
+              volScattered = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (exited) {
+        // Refract out of opal. pos lands exactly on the surface thanks to
+        // the tExit clamp, and the outer few percent is pure glass shell,
+        // so no Bragg firing here — the silhouette reads as a clean glass
+        // interface, which is how real opal cabochons actually look.
+        vec3 N = opalNormal(pos);
+        float cosI = abs(dot(-dir, N));
+        float F = fresnel(cosI, N_GLASS, 1.0);
+        if (rand() < F) {
+          dir = reflect(dir, -N);
+          pos += dir * 0.002;
+          // stay inside
+        } else {
+          dir = refractVec(dir, -N, N_GLASS / 1.0);
+          pos += dir * 0.002;
+          insideOpal = false;
+          // continue outside
+        }
+      } else if (hitBoundary) {
+        // ── Ewald diffraction at domain boundary ──
+        // bProb is scaled by braggGate so the soft chord gate reduces (not
+        // zeros) scatter probability for short grazing chords.
+        vec4 quat = getQuat(curGrain);
+        float bProb, bTotal;
+        vec3 dDir = ewaldDiffract(dir, lam, quat, bProb, bTotal);
+        if (bProb > 0.0 && rand() < bProb * braggGate) {
+          dir = dDir;
+        }
+        pos += dir * 0.003;
+      } else if (volScattered) {
+        // Volumetric scatter already updated dir; nudge forward to escape
+        // the current texel and let the next iteration resume marching.
+        pos += dir * 0.003;
+      }
+    }
+  }
+  return vec3(0.0);
+}
+
+void main() {
+  rngSeed(gl_FragCoord.xy, uFrame);
+
+  vec2 jitter = vec2(rand(), rand()) - 0.5;
+  vec2 ndc = (gl_FragCoord.xy + jitter) / uResolution * 2.0 - 1.0;
+  vec4 cd = vec4(ndc, -1.0, 1.0);
+  vec4 vd = uCamInvProj * cd;
+  vd = vec4(vd.xy, -1.0, 0.0);
+  vec3 rd = normalize((uCamInvView * vd).xyz);
+
+  float lam = 380.0 + rand() * 400.0;
+  vec3 result = trace(uCamPos, rd, lam);
+
+  // Hero wavelength → XYZ: weight by CIE color matching, normalize by ∫ȳ dλ
+  result *= wl2xyz(lam) * (400.0 / 105.4);
+
+  vec4 prev = texture2D(uAccum, vUv);
+  gl_FragColor = vec4((prev.rgb * uSampleCount + result) / (uSampleCount + 1.0), 1.0);
+}
+`;
+
+const displayFrag = `
+precision highp float;
+uniform sampler2D uAccum;
+varying vec2 vUv;
+
+// XYZ → linear sRGB (D65 / sRGB primaries)
+vec3 xyz2rgb(vec3 xyz) {
+  return vec3(
+     3.2406 * xyz.x - 1.5372 * xyz.y - 0.4986 * xyz.z,
+    -0.9689 * xyz.x + 1.8758 * xyz.y + 0.0415 * xyz.z,
+     0.0557 * xyz.x - 0.2040 * xyz.y + 1.0570 * xyz.z
+  );
+}
+
+vec3 aces(vec3 x) { return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
+
+void main() {
+  vec3 xyz = texture2D(uAccum, vUv).rgb;
+  vec3 c = xyz2rgb(xyz);
+  // White balance: equal-energy illuminant → D65 adaptation
+  // E white in linear sRGB is (1.263, 0.929, 0.924) — divide to neutralize
+  c /= vec3(1.2633, 0.9291, 0.9240);
+  c = max(c, 0.0);
+  c = aces(c * 2.0);
+  c = pow(c, vec3(1.0/2.2));
+  gl_FragColor = vec4(c, 1.0);
+}
+`;
+
+// ── Materials ──
+const ptMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uSiteTex:    { value: null },
+    uGrainTex:   { value: null },
+    uCodebook:   { value: null },
+    uGVectors:   { value: gTex.tex },
+    uColorLUT:   { value: colorLUT },
+    uAccum:      { value: null },
+    uResolution: { value: new THREE.Vector2(innerWidth, innerHeight) },
+    uCamInvProj: { value: new THREE.Matrix4() },
+    uCamInvView: { value: new THREE.Matrix4() },
+    uCamPos:     { value: new THREE.Vector3() },
+    uFrame:      { value: 0 },
+    uSampleCount:{ value: 0 },
+    uDiameter:   { value: 280 },
+    uBodyTone:   { value: 0.45 },
+    uGrainCount: { value: 1 },
+    uDomainScale:{ value: 24 },
+    uCellOffset: { value: 25 },
+    uCellStride: { value: 51 },
+    uMaxBounces: { value: 12 },
+    uGVecCount:  { value: gTex.count },
+    uLaueSigma2: { value: 0.003 },  // Gaussian envelope width² for the Laue
+                                    // N² factor. Physical ceiling for N=20
+                                    // layers is ~0.0005; 0.003 trades a touch
+                                    // of peak width for smoother across-angle
+                                    // sliding. Above 0.015 the envelope is
+                                    // wider than the inter-G spacing and
+                                    // everything smears to white.
+    uEnvIntensity:{ value: 0.1 },   // sharp-key env brightness multiplier (low default — broad sky was drowning Bragg filter)
+    uVolScatter: { value: 3.0 },    // volumetric Bragg scatter coefficient (1/length); 0 disables
+
+  },
+  vertexShader: ptVert,
+  fragmentShader: ptFrag,
+  depthTest: false, depthWrite: false,
+});
+
+const displayMat = new THREE.ShaderMaterial({
+  uniforms: { uAccum: { value: null } },
+  vertexShader: ptVert,
+  fragmentShader: displayFrag,
+  depthTest: false, depthWrite: false,
+});
+
+const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2,2), ptMat);
+const fsScene = new THREE.Scene(); fsScene.add(fsQuad);
+const fsCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+const displayQuad = new THREE.Mesh(new THREE.PlaneGeometry(2,2), displayMat);
+const displayScene = new THREE.Scene(); displayScene.add(displayQuad);
+
+// ── Opal presets ──
+const PRESETS = {
+  black:   { d: 280, scale: 24, perc: 0.42, tone: 0.45 },
+  white:   { d: 280, scale: 32, perc: 0.22, tone: 0.15 },
+  crystal: { d: 260, scale: 28, perc: 0.32, tone: 0.10 },
+  fire:    { d: 240, scale: 36, perc: 0.30, tone: 0.25 },
+};
+
+function applyPreset(name) {
+  const p = PRESETS[name]; if (!p) return;
+  document.getElementById('diam').value  = p.d;
+  document.getElementById('grain').value = p.scale;
+  document.getElementById('perc').value  = Math.round(p.perc * 100);
+  document.getElementById('tone').value  = Math.round(p.tone * 100);
+  // setValDisplay will write the formatted display string into each .val
+  // number input — applyPreset is the only place that writes the slider
+  // values directly without going through an input event, so it's also the
+  // only place that has to refresh the displays manually.
+  setValDisplay('diam',  p.d);
+  setValDisplay('grain', p.scale);
+  setValDisplay('perc',  Math.round(p.perc * 100));
+  setValDisplay('tone',  Math.round(p.tone * 100));
+  ptMat.uniforms.uDiameter.value = p.d;
+  ptMat.uniforms.uBodyTone.value = p.tone;
+  ptMat.uniforms.uDomainScale.value = p.scale;
+  gTex = precomputeG(p.d);
+  ptMat.uniforms.uGVectors.value = gTex.tex;
+  ptMat.uniforms.uGVecCount.value = gTex.count;
+  bp.s = p.scale; bp.p = p.perc;
+  rebakeVolume(0, p.scale, p.perc);
+}
+
+document.getElementById('preset').addEventListener('change', e => applyPreset(e.target.value));
+
+// ── Initial bake ──
+// Read from the actual slider DOM values rather than hardcoded constants,
+// so a browser-cached slider state on reload doesn't desync from the
+// first bake. (The `bp` state object that the bind handlers update lives
+// later in the file — that's fine, the startup sync block at the bottom
+// dispatches input events through the bind handlers and brings bp.s/bp.p
+// into agreement with these DOM values within the same tick.)
+rebakeVolume(
+  0,
+  +document.getElementById('grain').value,
+  +document.getElementById('perc').value / 100
+);
+
+// ── Resize ──
+window.addEventListener('resize', () => {
+  if (TT.active) return;  // turntable owns canvas size while open
+  cam.aspect = innerWidth/innerHeight;
+  cam.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  accumTarget.forEach(t => t.setSize(innerWidth, innerHeight));
+  ptMat.uniforms.uResolution.value.set(innerWidth, innerHeight);
+  resetAccum();
+});
+
+// ── Turntable: square modal that orbits the camera around Y, accumulating
+// N samples per stop. Reuses the same renderer/canvas (just reparents the
+// canvas into the modal slot and resizes). Per-angle sample budget can go
+// high so beefy GPUs can drive noise to nothing.
+const TT = {
+  active: false, paused: false,
+  angles: 72, samplesPerAngle: 128,
+  distance: 2.70,  // camera is locked to the equator (y=0) for frontal turntable recording
+  cols: 12, frameSize: 512,
+  format: 'webp',        // 'webp' | 'jpeg'. WebP at q90 is ~14% smaller than
+                         // JPG q90 with no visible loss on sparkle — default.
+  quality: 0.90,         // applies to both formats
+  currentAngle: 0,
+  prev: { w: 0, h: 0, fov: 0, aspect: 0, parent: null, camPos: new THREE.Vector3(), controlsEnabled: true },
+};
+const TT_EXPORT = { active: false, cancelled: false, frame: 0, total: 0 };
+
+function ttApplyCamera() {
+  // Frontal turntable: camera orbits the opal at y=0 so the sphere's equator
+  // always passes through the centre of the frame. No elevation — this is the
+  // camera layout that atlas viewers assume.
+  const a = (TT.currentAngle / TT.angles) * Math.PI * 2;
+  const r = TT.distance;
+  cam.position.set(r * Math.sin(a), 0, r * Math.cos(a));
+  cam.lookAt(0, 0, 0);
+  cam.updateMatrixWorld();
+}
+
+function ttUpdateStatus() {
+  const s = Math.min(sampleCount, TT.samplesPerAngle);
+  document.getElementById('ttStatus').textContent =
+    `angle ${TT.currentAngle + 1}/${TT.angles} · sample ${s}/${TT.samplesPerAngle}` +
+    (TT.paused ? ' (paused)' : '');
+}
+
+function ttOpen() {
+  if (TT.active) return;
+  TT.active = true; TT.paused = false; TT.currentAngle = 0;
+  TT.prev.w = innerWidth; TT.prev.h = innerHeight;
+  TT.prev.fov = cam.fov; TT.prev.aspect = cam.aspect;
+  TT.prev.parent = canvas.parentNode;
+  TT.prev.camPos.copy(cam.position);
+  TT.prev.controlsEnabled = controls.enabled;
+
+  document.getElementById('ttModal').setAttribute('data-open', '1');
+  const slot = document.getElementById('ttSlot');
+  slot.appendChild(canvas);
+  // Wait one frame for layout, then size to slot. updateStyle=false because
+  // CSS forces canvas to fill the slot regardless of drawing-buffer size
+  // (lets us resize for atlas export without breaking the visual layout).
+  requestAnimationFrame(() => {
+    const sz = Math.min(slot.clientWidth, slot.clientHeight);
+    renderer.setSize(sz, sz, false);
+    accumTarget.forEach(t => t.setSize(sz, sz));
+    ptMat.uniforms.uResolution.value.set(sz, sz);
+    cam.aspect = 1;
+    cam.fov = 40;
+    cam.updateProjectionMatrix();
+    controls.enabled = false;
+    ttApplyCamera();
+    resetAccum();
+    document.getElementById('ttPause').textContent = 'Pause';
+    ttUpdateStatus();
+  });
+}
+
+function ttClose() {
+  if (!TT.active) return;
+  if (TT_EXPORT.active) TT_EXPORT.cancelled = true;
+  TT.active = false;
+  document.getElementById('ttModal').removeAttribute('data-open');
+  document.body.appendChild(canvas);
+  canvas.style.width = ''; canvas.style.height = '';
+  renderer.setSize(TT.prev.w, TT.prev.h, false);
+  accumTarget.forEach(t => t.setSize(TT.prev.w, TT.prev.h));
+  ptMat.uniforms.uResolution.value.set(TT.prev.w, TT.prev.h);
+  cam.aspect = TT.prev.aspect;
+  cam.fov = TT.prev.fov;
+  cam.updateProjectionMatrix();
+  cam.position.copy(TT.prev.camPos);
+  controls.enabled = TT.prev.controlsEnabled;
+  controls.update();
+  resetAccum();
+}
+
+document.getElementById('ttOpen').addEventListener('click', ttOpen);
+document.getElementById('ttClose').addEventListener('click', ttClose);
+document.querySelector('#ttModal .backdrop').addEventListener('click', ttClose);
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && TT.active) ttClose(); });
+
+document.getElementById('ttAngles').addEventListener('input', e => {
+  TT.angles = +e.target.value;
+  setValDisplay('ttAngles', TT.angles);
+  if (TT.currentAngle >= TT.angles) TT.currentAngle = 0;
+  if (TT.active) { ttApplyCamera(); ttUpdateStatus(); }
+});
+document.getElementById('ttSpa').addEventListener('input', e => {
+  TT.samplesPerAngle = +e.target.value;
+  setValDisplay('ttSpa', TT.samplesPerAngle);
+  if (TT.active) ttUpdateStatus();
+});
+document.getElementById('ttDist').addEventListener('input', e => {
+  TT.distance = +e.target.value / 100;
+  setValDisplay('ttDist', +e.target.value);
+  if (TT.active) { ttApplyCamera(); }
+});
+document.getElementById('ttPause').addEventListener('click', () => {
+  if (TT_EXPORT.active) return;
+  TT.paused = !TT.paused;
+  document.getElementById('ttPause').textContent = TT.paused ? 'Resume' : 'Pause';
+  ttUpdateStatus();
+});
+
+// ── Atlas export controls ──
+function ttUpdateAtlasInfo() {
+  const rows = Math.ceil(TT.angles / TT.cols);
+  const w = TT.cols * TT.frameSize;
+  const h = rows * TT.frameSize;
+  document.getElementById('ttAtlasInfo').textContent =
+    `${TT.cols} × ${rows} · ${w} × ${h} px`;
+}
+document.getElementById('ttCols').addEventListener('input', e => {
+  TT.cols = +e.target.value;
+  setValDisplay('ttCols', TT.cols);
+  ttUpdateAtlasInfo();
+});
+document.getElementById('ttFrameSz').addEventListener('input', e => {
+  TT.frameSize = +e.target.value;
+  setValDisplay('ttFrameSz', TT.frameSize);
+  ttUpdateAtlasInfo();
+});
+document.getElementById('ttJpegQ').addEventListener('input', e => {
+  TT.quality = +e.target.value / 100;
+  setValDisplay('ttJpegQ', +e.target.value);
+});
+document.getElementById('ttFormat').addEventListener('change', e => {
+  TT.format = e.target.value;
+});
+// Also refresh atlas info when angles slider moves
+document.getElementById('ttAngles').addEventListener('input', ttUpdateAtlasInfo);
+ttUpdateAtlasInfo();
+
+// Wait until the running animate loop has accumulated `target` samples at
+// the current camera. Polls each animation frame.
+function waitForSamples(target) {
+  return new Promise(resolve => {
+    requestAnimationFrame(function check() {
+      if (TT_EXPORT.cancelled || sampleCount >= target) resolve();
+      else requestAnimationFrame(check);
+    });
+  });
+}
+
+async function ttExport() {
+  if (TT_EXPORT.active || !TT.active) return;
+  const total = TT.angles;
+  const cols = TT.cols;
+  const rows = Math.ceil(total / cols);
+  const fsz = TT.frameSize;
+
+  TT_EXPORT.active = true;
+  TT_EXPORT.cancelled = false;
+  TT_EXPORT.total = total;
+  TT_EXPORT.frame = 0;
+
+  const btn = document.getElementById('ttExport');
+  btn.textContent = 'Cancel Export';
+
+  // Pause the live turntable advancement so export drives angles itself
+  const wasPaused = TT.paused;
+  TT.paused = true;
+
+  // Resize the renderer to the atlas frame size. CSS keeps the canvas
+  // visually filling the slot regardless of drawing-buffer size.
+  const slot = document.getElementById('ttSlot');
+  const slotSz = Math.min(slot.clientWidth, slot.clientHeight);
+  renderer.setSize(fsz, fsz, false);
+  accumTarget.forEach(t => t.setSize(fsz, fsz));
+  ptMat.uniforms.uResolution.value.set(fsz, fsz);
+  resetAccum();
+
+  const atlasW = cols * fsz;
+  const atlasH = rows * fsz;
+  const off = document.createElement('canvas');
+  off.width = atlasW; off.height = atlasH;
+  const ctx = off.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, atlasW, atlasH);
+  const status = document.getElementById('ttStatus');
+
+  try {
+    for (let i = 0; i < total; i++) {
+      if (TT_EXPORT.cancelled) break;
+      TT_EXPORT.frame = i;
+      TT.currentAngle = i % TT.angles;
+      ttApplyCamera();
+      // Force the camMoved check next frame to reset accum
+      // (camMoved sees the new view matrix and calls resetAccum() in animate)
+
+      status.textContent = `EXPORT ${i + 1}/${total} · accumulating ${TT.samplesPerAngle} samples…`;
+      await waitForSamples(TT.samplesPerAngle);
+      if (TT_EXPORT.cancelled) break;
+
+      // Capture this angle. Wait one extra rAF so the latest accumulation
+      // is guaranteed flushed to the visible canvas.
+      await new Promise(r => requestAnimationFrame(r));
+      const c = i % cols;
+      const r = Math.floor(i / cols);
+      ctx.drawImage(canvas, c * fsz, r * fsz, fsz, fsz);
+    }
+
+    if (!TT_EXPORT.cancelled) {
+      status.textContent = `EXPORT stitching ${cols}×${rows} atlas…`;
+      // Yield once so the UI updates
+      await new Promise(r => requestAnimationFrame(r));
+
+      const mime = TT.format === 'webp' ? 'image/webp' : 'image/jpeg';
+      const ext = TT.format === 'webp' ? 'webp' : 'jpg';
+      const atlasBlob = await new Promise(
+        r => off.toBlob(r, mime, TT.quality)
+      );
+      const url = URL.createObjectURL(atlasBlob);
+      const a = document.createElement('a');
+      const presetName = document.getElementById('preset').value;
+      const qTag = Math.round(TT.quality * 100);
+      a.href = url;
+      a.download = `opal-${presetName}-turntable-${cols}x${rows}-${fsz}-q${qTag}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+      const mb = (atlasBlob.size / 1024 / 1024).toFixed(2);
+      status.textContent = `EXPORT done · ${cols}×${rows} · ${atlasW}×${atlasH}px · ${mb} MB ${ext} · downloaded`;
+    } else {
+      status.textContent = `EXPORT cancelled at frame ${TT_EXPORT.frame + 1}/${total}`;
+    }
+  } catch (err) {
+    console.error('Atlas export failed:', err);
+    status.textContent = `EXPORT error: ${err.message}`;
+  } finally {
+    // Restore renderer to slot size
+    renderer.setSize(slotSz, slotSz, false);
+    accumTarget.forEach(t => t.setSize(slotSz, slotSz));
+    ptMat.uniforms.uResolution.value.set(slotSz, slotSz);
+    resetAccum();
+    TT.paused = wasPaused;
+    TT_EXPORT.active = false;
+    TT_EXPORT.cancelled = false;
+    btn.textContent = 'Export Atlas';
+  }
+}
+
+document.getElementById('ttExport').addEventListener('click', () => {
+  if (TT_EXPORT.active) {
+    TT_EXPORT.cancelled = true;
+  } else {
+    ttExport();
+  }
+});
+
+function nextFrame() {
+  return new Promise(r => requestAnimationFrame(r));
+}
+
+function blobToDataURL(blob) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function prepareTurntableFrame(cfg = {}) {
+  if (!TT.active) {
+    ttOpen();
+    await nextFrame();
+    await nextFrame();
+  }
+
+  TT.angles = cfg.angles ?? TT.angles;
+  TT.samplesPerAngle = cfg.samples ?? TT.samplesPerAngle;
+  TT.frameSize = cfg.frameSize ?? TT.frameSize;
+  TT.distance = cfg.distance ?? TT.distance;
+  TT.currentAngle = cfg.angleIndex ?? TT.currentAngle;
+  TT.paused = true;
+
+  renderer.setSize(TT.frameSize, TT.frameSize, false);
+  accumTarget.forEach(t => t.setSize(TT.frameSize, TT.frameSize));
+  ptMat.uniforms.uResolution.value.set(TT.frameSize, TT.frameSize);
+  cam.aspect = 1;
+  cam.fov = 40;
+  cam.updateProjectionMatrix();
+  controls.enabled = false;
+  ttApplyCamera();
+  resetAccum();
+  ttUpdateStatus();
+  await nextFrame();
+}
+
+window.__opalTurntableAPI = {
+  prepareFrame: prepareTurntableFrame,
+  sampleCount: () => sampleCount,
+  status: () => document.getElementById('ttStatus').textContent,
+  async renderFrame(cfg = {}) {
+    const samples = cfg.samples ?? TT.samplesPerAngle;
+    await prepareTurntableFrame(cfg);
+    await waitForSamples(samples);
+    await nextFrame();
+    const format = cfg.format || TT.format || 'webp';
+    const mime = format === 'jpeg' ? 'image/jpeg' : 'image/webp';
+    const quality = cfg.quality ?? TT.quality ?? 0.9;
+    const blob = await new Promise(r => canvas.toBlob(r, mime, quality));
+    return blobToDataURL(blob);
+  },
+};
+
+// ── Camera change ──
+let lastCamMat = new THREE.Matrix4();
+function camMoved(a,b) { const ea=a.elements, eb=b.elements; for(let i=0;i<16;i++) if(Math.abs(ea[i]-eb[i])>1e-6) return true; return false; }
+
+// ── UI ──
+// Slider drags fire `input` continuously, which used to reset accumulation on
+// every pixel of motion and keep the image visibly noisy while the user was
+// still tuning. Debounce by 150ms so the viewport can keep converging between
+// successive slider moves, then clear the accumulator once the drag pauses.
+let _debReset = null;
+function debouncedReset() {
+  clearTimeout(_debReset);
+  _debReset = setTimeout(() => { _debReset = null; resetAccum(); }, 150);
+}
+
+// ── Slider ↔ number-input two-way binding ──
+// Each .val element is now an <input type="number"> showing the value in its
+// natural physical units. The slider stores an integer; the input shows
+// integer*scale^-1, e.g. perc slider raw=42 ↔ input shows 0.42.
+//   raw     = round(display * scale)
+//   display = raw / scale, formatted to `fmt` decimals
+const PARAM_DISPLAY = {
+  diam:      { scale: 1,    fmt: 0 },
+  grain:     { scale: 1,    fmt: 0 },
+  perc:      { scale: 100,  fmt: 2 },
+  tone:      { scale: 100,  fmt: 2 },
+  bounces:   { scale: 1,    fmt: 0 },
+  laue:      { scale: 1000, fmt: 3 },
+  envInt:    { scale: 100,  fmt: 2 },
+  volScat:   { scale: 1,    fmt: 1 },
+  ttAngles:  { scale: 1,    fmt: 0 },
+  ttSpa:     { scale: 1,    fmt: 0 },
+  ttDist:    { scale: 100,  fmt: 2 },
+  ttCols:    { scale: 1,    fmt: 0 },
+  ttFrameSz: { scale: 1,    fmt: 0 },
+  ttJpegQ:   { scale: 1,    fmt: 0 },
+};
+function setValDisplay(sliderId, rawValue) {
+  const cfg = PARAM_DISPLAY[sliderId];
+  const el  = document.getElementById(sliderId + 'V');
+  if (!el || !cfg) return;
+  // Don't fight the user mid-typing — they're focused, leave their cursor
+  // alone. The slider handler still runs and updates uniforms.
+  if (document.activeElement === el) return;
+  el.value = (rawValue / cfg.scale).toFixed(cfg.fmt);
+}
+function linkValInput(sliderId) {
+  const cfg    = PARAM_DISPLAY[sliderId];
+  const slider = document.getElementById(sliderId);
+  const num    = document.getElementById(sliderId + 'V');
+  if (!cfg || !slider || !num) return;
+  num.addEventListener('input', () => {
+    const v = parseFloat(num.value);
+    if (!isFinite(v)) return;
+    let raw = Math.round(v * cfg.scale);
+    raw = Math.max(+slider.min, Math.min(+slider.max, raw));
+    if (String(raw) !== slider.value) {
+      slider.value = String(raw);
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  // Snap to canonical formatting on blur (e.g. ".42" → "0.42").
+  num.addEventListener('change', () => setValDisplay(sliderId, +slider.value));
+}
+
+function bind(id, fn) {
+  document.getElementById(id).addEventListener('input', e => {
+    fn(e);
+    setValDisplay(id, +e.target.value);
+    debouncedReset();
+  });
+}
+bind('diam', e => {
+  const d = +e.target.value;
+  ptMat.uniforms.uDiameter.value = d;
+  gTex = precomputeG(d);
+  ptMat.uniforms.uGVectors.value = gTex.tex;
+  ptMat.uniforms.uGVecCount.value = gTex.count;
+});
+bind('tone', e => { ptMat.uniforms.uBodyTone.value = +e.target.value / 100; });
+bind('bounces', e => ptMat.uniforms.uMaxBounces.value = +e.target.value);
+bind('laue', e => { ptMat.uniforms.uLaueSigma2.value = +e.target.value / 1000; });
+bind('envInt', e => { ptMat.uniforms.uEnvIntensity.value = +e.target.value / 100; });
+bind('volScat', e => { ptMat.uniforms.uVolScatter.value = +e.target.value; });
+
+let bakeT=0, bp={s:24,p:0.42};
+function sched() { clearTimeout(bakeT); bakeT = setTimeout(() => rebakeVolume(0, bp.s, bp.p), 300); }
+bind('grain', e => { bp.s=+e.target.value; ptMat.uniforms.uDomainScale.value=bp.s; sched(); });
+bind('perc',  e => { bp.p=+e.target.value/100; sched(); });
+
+// ── Wire number-input → slider for every render & turntable param ──
+// Has to run AFTER both the input and slider exist in the DOM AND after the
+// slider input handlers above are bound (so typing into the input fires
+// through them). Run on next microtask just to be safe.
+['diam','grain','perc','tone','bounces','laue','envInt','volScat',
+ 'ttAngles','ttSpa','ttDist','ttCols','ttFrameSz','ttJpegQ'].forEach(linkValInput);
+
+// ── Sync shader uniforms to slider DOM values at startup ──
+// Browsers cache form input values across page reloads, so the displayed
+// slider values can drift away from the JS uniform defaults declared in
+// the ShaderMaterial block. Without this sync, the sliders show one set
+// of numbers and the shader renders with a different set — confusing as
+// hell.
+//
+// Bake-affecting sliders (grain, perc, diam) are NOT dispatched through
+// the bind handlers because that would queue a debounced rebake 300 ms
+// later that's redundant with the initial bake on line 962 above (which
+// already reads DOM values). Instead we set their state directly:
+// uDiameter + gTex from DOM, uDomainScale from DOM, and bp.s/bp.p from
+// DOM so the next user-driven sched() call sees correct state.
+//
+// The remaining (non-bake) sliders ARE dispatched so their bind handlers
+// fire and push DOM → uniform with the unit conversions baked in. This
+// is the only path that gets tone/100, laue/1000, envInt/100 right
+// without duplicating the conversion math here.
+{
+  const diamD  = +document.getElementById('diam').value;
+  const grainD = +document.getElementById('grain').value;
+  const percD  = +document.getElementById('perc').value / 100;
+  ptMat.uniforms.uDiameter.value = diamD;
+  gTex = precomputeG(diamD);
+  ptMat.uniforms.uGVectors.value = gTex.tex;
+  ptMat.uniforms.uGVecCount.value = gTex.count;
+  ptMat.uniforms.uDomainScale.value = grainD;
+  bp.s = grainD;
+  bp.p = percD;
+}
+['tone','bounces','laue','envInt','volScat'].forEach(id => {
+  document.getElementById(id).dispatchEvent(new Event('input'));
+});
+
+// ── Settings serialization ──
+// All knobs the user can tune live on slider/select elements. Serialize the
+// raw values so round-trip is lossless and we don't need to know each knob's
+// unit conversion. Turntable knobs are bundled too so capture sessions can
+// be reproduced verbatim.
+const SETTINGS_KEYS = [
+  'preset','diam','grain','perc','tone','bounces','laue','envInt','volScat',
+  'ttAngles','ttSpa','ttDist','ttCols','ttFrameSz','ttFormat','ttJpegQ',
+];
+function collectSettings() {
+  const out = { version: 1 };
+  for (const id of SETTINGS_KEYS) {
+    const el = document.getElementById(id);
+    if (el) out[id] = el.value;
+  }
+  return out;
+}
+function applySettings(s) {
+  if (!s || typeof s !== 'object') return false;
+  // Apply preset first so its defaults don't clobber explicit values below.
+  if (s.preset && PRESETS[s.preset]) {
+    document.getElementById('preset').value = s.preset;
+    applyPreset(s.preset);
+  }
+  for (const id of SETTINGS_KEYS) {
+    if (id === 'preset') continue;
+    if (!(id in s)) continue;
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.value = s[id];
+    // Dispatch the appropriate event so listeners recompute uniforms / bakes.
+    const evtName = (el.tagName === 'SELECT') ? 'change' : 'input';
+    el.dispatchEvent(new Event(evtName, { bubbles: true }));
+  }
+  resetAccum();
+  return true;
+}
+document.getElementById('settingsCopy').addEventListener('click', async () => {
+  const btn = document.getElementById('settingsCopy');
+  const txt = JSON.stringify(collectSettings(), null, 2);
+  try {
+    await navigator.clipboard.writeText(txt);
+    const prev = btn.textContent;
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = prev; }, 1200);
+  } catch (err) {
+    // Clipboard API can fail on http:// pages or when the doc isn't focused.
+    // Fall back to window.prompt so the user can still grab the JSON.
+    window.prompt('Copy settings JSON:', txt);
+  }
+});
+document.getElementById('settingsPaste').addEventListener('click', async () => {
+  const btn = document.getElementById('settingsPaste');
+  let txt = null;
+  try {
+    txt = await navigator.clipboard.readText();
+  } catch {}
+  if (!txt) txt = window.prompt('Paste settings JSON:');
+  if (!txt) return;
+  try {
+    const s = JSON.parse(txt);
+    if (!applySettings(s)) throw new Error('invalid shape');
+    const prev = btn.textContent;
+    btn.textContent = 'Loaded ✓';
+    setTimeout(() => { btn.textContent = prev; }, 1200);
+  } catch (err) {
+    alert('Invalid settings JSON: ' + err.message);
+  }
+});
+
+// ── Render loop ──
+// Pause flag — when true, animate() still runs (so the canvas keeps
+// painting and OrbitControls stay live), but the path-tracing render
+// pass and the camera-moved reset are both skipped, so the accumulated
+// buffer freezes exactly where it is.
+let paused = false;
+const pauseBtn = document.getElementById('pauseBtn');
+pauseBtn.addEventListener('click', () => {
+  paused = !paused;
+  pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  // Sync the camera matrix on resume so the unpause doesn't immediately
+  // reset the accumulator from a stale lastCamMat comparison.
+  if (!paused) lastCamMat.copy(cam.matrixWorldInverse);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  if (TT.active) {
+    // Advance angle once we've hit the per-angle sample budget. The
+    // camMoved check below picks up the camera move and triggers
+    // resetAccum automatically, so each angle gets exactly N samples.
+    if (!TT.paused && !paused && sampleCount >= TT.samplesPerAngle) {
+      TT.currentAngle = (TT.currentAngle + 1) % TT.angles;
+      ttApplyCamera();
+    }
+    ttUpdateStatus();
+  } else {
+    controls.update();
+  }
+
+  if (paused) {
+    // Keep the display target painted with the frozen accumulator so the
+    // canvas doesn't go black, but skip the path-trace pass and the
+    // camMoved reset entirely.
+    displayMat.uniforms.uAccum.value = accumTarget[0].texture;
+    renderer.setRenderTarget(null);
+    renderer.render(displayScene, fsCam);
+    return;
+  }
+
+  const vm = cam.matrixWorldInverse;
+  if (camMoved(lastCamMat, vm)) { lastCamMat.copy(vm); resetAccum(); }
+
+  ptMat.uniforms.uCamInvProj.value.copy(cam.projectionMatrixInverse);
+  ptMat.uniforms.uCamInvView.value.copy(cam.matrixWorld);
+  ptMat.uniforms.uCamPos.value.copy(cam.position);
+  ptMat.uniforms.uFrame.value = sampleCount;
+  ptMat.uniforms.uSampleCount.value = sampleCount;
+
+  ptMat.uniforms.uAccum.value = accumTarget[0].texture;
+  renderer.setRenderTarget(accumTarget[1]);
+  renderer.render(fsScene, fsCam);
+  [accumTarget[0], accumTarget[1]] = [accumTarget[1], accumTarget[0]];
+  sampleCount++;
+
+  displayMat.uniforms.uAccum.value = accumTarget[0].texture;
+  renderer.setRenderTarget(null);
+  renderer.render(displayScene, fsCam);
+  document.getElementById('scount').textContent = sampleCount;
+}
+animate();
+</script>
+</body></html>

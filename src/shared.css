@@ -1,0 +1,160 @@
+/*
+ * Shared design tokens and common components.
+ * Import via <link rel="stylesheet" href="src/shared.css"> in each tool page.
+ */
+
+:root {
+  --bg: #09090b;
+  --card: #111113;
+  --card-hover: #18181b;
+  --border: #27272a;
+  --border-focus: #3f3f46;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --dim: #71717a;
+  --blue: #1878e0;
+  --blue-muted: rgba(24,120,224,0.12);
+  --amber: #e08818;
+  --amber-muted: rgba(224,136,24,0.12);
+  --red: #e03020;
+  --radius: 6px;
+  --radius-lg: 8px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 13px; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+canvas { display: block; }
+
+/* ─── Panels ─── */
+.panel {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px 14px;
+  backdrop-filter: blur(12px);
+}
+.panel h2 {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+}
+
+.section { margin: 10px 0; }
+.section-label {
+  font-size: 10px; font-weight: 500; color: var(--dim);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 5px;
+}
+
+/* ─── Buttons ─── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 5px 12px; margin: 2px 3px 2px 0;
+  background: var(--card-hover); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text);
+  font-family: inherit; font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: all 0.12s; user-select: none;
+}
+.btn:hover { background: #27272a; border-color: var(--border-focus); }
+.btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.btn-sm { padding: 3px 8px; font-size: 10px; border-radius: 4px; }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn-ghost:hover { background: var(--card-hover); color: var(--text); }
+.btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.btn-primary:hover { opacity: 0.85; }
+
+/* ─── Inputs ─── */
+input[type=number] {
+  width: 52px; padding: 4px 6px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); font-family: inherit; font-size: 11px;
+  outline: none; transition: border-color 0.12s;
+}
+input[type=number]:focus { border-color: var(--blue); }
+
+input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  height: 4px; background: var(--border); border-radius: 2px;
+  outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--blue); border: 2px solid var(--card);
+  box-shadow: 0 0 0 1px var(--blue); cursor: pointer;
+  transition: transform 0.1s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+
+select {
+  padding: 4px 6px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: inherit; font-size: 11px; outline: none;
+}
+
+/* ─── Background swatches ─── */
+.bg-swatch {
+  width: 20px; height: 20px; border-radius: 3px;
+  border: 1px solid var(--border); cursor: pointer;
+  transition: transform 0.1s;
+}
+.bg-swatch:hover { transform: scale(1.15); }
+.bg-swatch.active { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+/* ─── Toast ─── */
+#toast {
+  position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+  z-index: 100; background: var(--text); color: var(--bg);
+  padding: 8px 20px; font-size: 12px; font-weight: 600;
+  border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  opacity: 0; transition: opacity 0.2s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+/* ─── Joint sliders ─── */
+.joint-row {
+  display: flex; align-items: center; gap: 6px; margin: 3px 0;
+}
+.joint-row label {
+  font-size: 10px; color: var(--dim); min-width: 70px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.joint-row input[type=range] { flex: 1; }
+.joint-row .joint-val {
+  font-size: 10px; color: var(--muted); min-width: 30px; text-align: right;
+}
+
+/* ─── Gnomon ─── */
+#gnomon-canvas {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 20; cursor: pointer;
+}
+
+/* ─── Nav bar ─── */
+#so101-nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+  height: 32px; display: flex; align-items: center; gap: 2px;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  padding: 0 10px; font-size: 11px;
+  transform: translateY(-100%);
+  transition: transform 0.15s ease;
+}
+#so101-nav.visible { transform: translateY(0); }
+#so101-nav a {
+  color: var(--muted); text-decoration: none; padding: 4px 8px;
+  border-radius: 4px; transition: all 0.1s; white-space: nowrap;
+}
+#so101-nav a:hover { color: var(--text); background: var(--card-hover); }
+#so101-nav a.active { color: var(--blue); }
+#so101-nav .nav-sep { color: var(--border); margin: 0 2px; }
+#so101-nav .nav-home {
+  font-weight: 600; color: var(--text); margin-right: 6px;
+  padding: 4px 8px; letter-spacing: 0.03em;
+}
+#so101-nav .nav-home:hover { color: var(--blue); }
+.nav-trigger {
+  position: fixed; top: 0; left: 0; right: 0; height: 8px; z-index: 10000;
+}

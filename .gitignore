@@ -1,0 +1,6 @@
+node_modules/
+dist/
+renders/
+__pycache__/
+.DS_Store
+*.log

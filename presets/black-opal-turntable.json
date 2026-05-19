@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "preset": "black",
+  "diam": "345",
+  "grain": "12",
+  "perc": "37",
+  "tone": "0",
+  "bounces": "80",
+  "laue": "2",
+  "envInt": "5",
+  "volScat": "0",
+  "ttAngles": "72",
+  "ttSpa": "10",
+  "ttDist": "270",
+  "ttCols": "12",
+  "ttFrameSz": "512",
+  "ttFormat": "webp",
+  "ttJpegQ": "90"
+}

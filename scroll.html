@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Opal Turntable</title>
+<style>
+  :root { --bg: #09090b; }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg);
+    color: #fafafa;
+    font: 14px/1.5 Inter, system-ui, sans-serif;
+  }
+  .scroll-track {
+    height: 400vh;
+    position: relative;
+  }
+  .sticky-wrap {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  canvas {
+    max-width: min(80vw, 80vh);
+    max-height: min(80vw, 80vh);
+    width: 512px;
+    height: 512px;
+  }
+  .info {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: #3f3f46;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+  .hint {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #52525b;
+    pointer-events: none;
+    transition: opacity 0.6s;
+  }
+  .hint.hidden { opacity: 0; }
+  .loading {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: var(--bg);
+    z-index: 100;
+    transition: opacity 0.3s;
+  }
+  .loading.done { opacity: 0; pointer-events: none; }
+  .loading span { color: #a1a1aa; font-size: 13px; }
+</style>
+</head><body>
+
+<a href="/" style="position:fixed;top:16px;left:16px;z-index:101;font:11px/1 Inter,system-ui,sans-serif;color:#a1a1aa;text-decoration:none;background:rgba(10,10,15,0.92);border:1px solid #27272a;border-radius:6px;padding:7px 10px;">&larr; Index</a>
+
+<div class="loading" id="loading"><span>Loading...</span></div>
+
+<div class="scroll-track">
+  <div class="sticky-wrap">
+    <canvas id="viewer" width="512" height="512"></canvas>
+  </div>
+</div>
+<div class="hint" id="hint">Scroll or drag to rotate</div>
+<div class="info" id="info"></div>
+
+<script>
+const COLS = 12;
+const ROWS = 6;
+const TOTAL_FRAMES = COLS * ROWS;   // 72
+const CELL = 512;                    // per-frame size in the atlas
+const canvas = document.getElementById('viewer');
+const ctx = canvas.getContext('2d');
+const info = document.getElementById('info');
+const hint = document.getElementById('hint');
+const loadingEl = document.getElementById('loading');
+
+// ── Sprite-sheet atlas (spectral path trace, 72 angles × 50 spp) ──
+// WebP q90: ~5 MB, visually identical to the 25 MB PNG at pixel level.
+const atlas = new Image();
+atlas.src = '/opal-turntable-atlas.webp';
+
+let ready = false;
+let currentFrame = -1;
+
+atlas.addEventListener('load', () => {
+  ready = true;
+  loadingEl.classList.add('done');
+  info.textContent = `atlas · webp · ${COLS}×${ROWS} · ${TOTAL_FRAMES}f`;
+  seekToFrame(0);
+});
+
+function seekToFrame(frame) {
+  if (!ready) return;
+  if (frame === currentFrame) return;
+  currentFrame = frame;
+  const col = frame % COLS;
+  const row = Math.floor(frame / COLS);
+  ctx.clearRect(0, 0, CELL, CELL);
+  ctx.drawImage(atlas, col * CELL, row * CELL, CELL, CELL, 0, 0, CELL, CELL);
+}
+
+function progressToFrame(progress) {
+  return Math.min(TOTAL_FRAMES - 1, Math.floor(progress * TOTAL_FRAMES));
+}
+
+// ── Scroll-driven ──
+let ticking = false;
+window.addEventListener('scroll', () => {
+  if (ticking) return;
+  ticking = true;
+  hint.classList.add('hidden');
+  requestAnimationFrame(() => {
+    const scrollMax = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = Math.max(0, Math.min(1, window.scrollY / scrollMax));
+    seekToFrame(progressToFrame(progress));
+    ticking = false;
+  });
+}, { passive: true });
+
+// ── Drag-driven ──
+let dragging = false;
+let dragStartX = 0;
+let dragBaseProgress = 0;
+
+canvas.addEventListener('pointerdown', e => {
+  dragging = true;
+  dragStartX = e.clientX;
+  dragBaseProgress = currentFrame / TOTAL_FRAMES;
+  canvas.setPointerCapture(e.pointerId);
+  canvas.style.cursor = 'grabbing';
+  hint.classList.add('hidden');
+});
+
+window.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - dragStartX;
+  let progress = dragBaseProgress + dx / window.innerWidth;
+  progress = ((progress % 1) + 1) % 1;
+  seekToFrame(progressToFrame(progress));
+});
+
+window.addEventListener('pointerup', () => {
+  dragging = false;
+  canvas.style.cursor = '';
+});
+</script>
+</body></html>

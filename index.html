@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Opal Path Tracer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="src/shared.css">
+<style>
+  body { overflow: auto; min-height: 100vh; }
+
+  .page {
+    max-width: 760px; margin: 0 auto;
+    padding: 64px 24px 96px;
+  }
+
+  .page-head {
+    display: flex; align-items: baseline; gap: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px; margin-bottom: 24px;
+  }
+  .page-title {
+    font-size: 14px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text);
+  }
+  .page-sub {
+    font-size: 11px; color: var(--dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .intro {
+    font-size: 14px; line-height: 1.65; color: var(--muted);
+    margin-bottom: 32px;
+  }
+  .intro strong { color: var(--text); font-weight: 600; }
+
+  .group { margin-bottom: 32px; }
+  .group-label {
+    font-size: 10px; font-weight: 600; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin-bottom: 10px;
+  }
+
+  /* ─── Featured demo cards ─── */
+  .featured-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .feature-card {
+    display: block;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 16px 18px;
+    text-decoration: none; color: var(--text);
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .feature-card:hover {
+    background: var(--card-hover); border-color: var(--blue);
+  }
+  .feature-card .name {
+    font-size: 14px; font-weight: 600; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .feature-card .name .pill {
+    font-size: 8px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--blue);
+    border: 1px solid var(--blue);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .feature-card .desc {
+    font-size: 12px; color: var(--muted); line-height: 1.5;
+    margin-top: 6px;
+  }
+  .feature-card .file {
+    font-size: 10px; color: var(--dim);
+    font-family: 'JetBrains Mono', monospace; margin-top: 8px;
+  }
+
+  /* ─── Pipeline stages ─── */
+  .stage {
+    display: flex; gap: 14px; padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .stage:last-child { border-bottom: none; }
+  .stage .num {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    font-weight: 700; color: var(--blue); flex-shrink: 0;
+    width: 18px; padding-top: 1px;
+  }
+  .stage .body .name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+  }
+  .stage .body .name code {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--amber); font-weight: 500;
+  }
+  .stage .body .text {
+    font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: 3px;
+  }
+
+  /* ─── Footer ─── */
+  .footer {
+    margin-top: 36px; padding-top: 18px;
+    border-top: 1px solid var(--border);
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+    font-size: 11px; color: var(--dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .footer a { color: var(--muted); text-decoration: none; }
+  .footer a:hover { color: var(--blue); }
+
+  @media (max-width: 560px) {
+    .featured-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="page-head">
+    <div class="page-title">Opal Path Tracer</div>
+    <div class="page-sub">spectral · photonic crystal · webgl</div>
+  </div>
+
+  <p class="intro">
+    Precious opal gets its play-of-color from <strong>Bragg diffraction</strong>: light
+    bouncing off ordered arrays of silica nanospheres packed into a photonic crystal.
+    This is a physically-based spectral path tracer that renders that effect from first
+    principles. Every camera ray carries one wavelength, scatters off randomly-oriented
+    crystal grains baked into a Voronoi volume, and accumulates into a CIE&nbsp;XYZ buffer,
+    so the color you see is decided entirely by which wavelengths make it back out of the stone.
+  </p>
+
+  <div class="group">
+    <div class="group-label">Demos</div>
+    <div class="featured-grid">
+      <a class="feature-card" href="pathtracer.html">
+        <div class="name">Path Tracer <span class="pill">Live</span></div>
+        <div class="desc">
+          Interactive renderer. Tune sphere diameter, domain scale, percolation and body
+          tone, then orbit the cabochon while samples accumulate. Includes a turntable
+          mode that exports a sprite-sheet atlas.
+        </div>
+        <div class="file">pathtracer.html</div>
+      </a>
+      <a class="feature-card" href="scroll.html">
+        <div class="name">Opal Scroll <span class="pill">Atlas</span></div>
+        <div class="desc">
+          A pre-rendered 72-angle turntable. Scroll or drag to rotate the stone through a
+          spectral path-traced atlas, smooth enough to read the play-of-color shifting
+          with view angle.
+        </div>
+        <div class="file">scroll.html</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-label">How it works</div>
+    <div class="stage">
+      <div class="num">1</div>
+      <div class="body">
+        <div class="name">Volume bake <code>opal-volume-baker.js</code></div>
+        <div class="text">
+          A CPU worker prepares a compact domain map for the stone, including local
+          grain orientations and a few small textures that the shader can read quickly.
+        </div>
+      </div>
+    </div>
+    <div class="stage">
+      <div class="num">2</div>
+      <div class="body">
+        <div class="name">Spectral path trace <code>pathtracer.html</code></div>
+        <div class="text">
+          A fullscreen fragment shader traces wavelength samples through the opal body
+          and lets the local lattice geometry decide which colors flash back to the camera.
+        </div>
+      </div>
+    </div>
+    <div class="stage">
+      <div class="num">3</div>
+      <div class="body">
+        <div class="name">Display</div>
+        <div class="text">
+          Spectral samples are accumulated first, then converted to display color at
+          the end so the image stays tied to the optical path.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="pathtracer.html">Path tracer</a>
+    <a href="scroll.html">Atlas viewer</a>
+    <a href="https://github.com/a-sumo/opal-pathtracer">GitHub</a>
+    <span>MIT License</span>
+  </div>
+
+</div>
+</body>
+</html>
