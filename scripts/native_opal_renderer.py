@@ -21,51 +21,69 @@ from PIL import Image
 import taichi as ti
 
 
+# domain_scale is direct: it controls Voronoi cells in radius-normalized space.
+# Lower values make larger domains, which reads better after Lens downsamples the
+# native render into 160 px atlas cells.
 PRESETS = {
     "black": {
-        "diameter_nm": 345.0,
-        "domain_scale": 13.0,
-        "body": (0.018, 0.015, 0.022),
-        "body_weight": 0.34,
-        "play": 2.15,
+        "diameter_nm": 320.0,
+        "domain_scale": 3.5,
+        "body": (0.035, 0.042, 0.038),
+        "body_weight": 0.38,
+        "play": 1.65,
         "sigma": 2.8,
         "spec": 1.1,
+        "percolation": 0.38,
+        "cell_jitter": 0.9,
+        "domain_stretch": (1.0, 1.0, 1.0),
     },
     "white": {
-        "diameter_nm": 275.0,
-        "domain_scale": 24.0,
-        "body": (0.86, 0.84, 0.76),
+        "diameter_nm": 285.0,
+        "domain_scale": 2.8,
+        "body": (0.92, 0.86, 0.74),
         "body_weight": 0.74,
-        "play": 0.95,
+        "play": 0.70,
         "sigma": 0.35,
         "spec": 0.75,
+        "percolation": 0.34,
+        "cell_jitter": 0.82,
+        "domain_stretch": (1.0, 1.0, 1.0),
     },
     "crystal": {
-        "diameter_nm": 255.0,
-        "domain_scale": 17.0,
+        "diameter_nm": 305.0,
+        "domain_scale": 3.0,
         "body": (0.18, 0.24, 0.30),
         "body_weight": 0.22,
         "play": 1.55,
         "sigma": 0.55,
         "spec": 1.25,
+        "percolation": 0.36,
+        "cell_jitter": 0.9,
+        "domain_stretch": (1.0, 1.0, 1.0),
     },
     "fire": {
-        "diameter_nm": 430.0,
-        "domain_scale": 10.0,
-        "body": (0.95, 0.22, 0.035),
+        "diameter_nm": 340.0,
+        "domain_scale": 3.1,
+        "body": (0.98, 0.36, 0.055),
         "body_weight": 0.52,
-        "play": 1.15,
+        "play": 1.20,
         "sigma": 0.9,
         "spec": 0.85,
+        "percolation": 0.36,
+        "cell_jitter": 0.85,
+        "domain_stretch": (1.0, 1.0, 1.0),
     },
     "harlequin": {
-        "diameter_nm": 315.0,
-        "domain_scale": 6.5,
-        "body": (0.020, 0.016, 0.020),
-        "body_weight": 0.30,
-        "play": 2.35,
-        "sigma": 2.45,
-        "spec": 1.15,
+        "diameter_nm": 350.0,
+        "domain_scale": 2.05,
+        "body": (0.16, 0.105, 0.070),
+        "body_weight": 0.44,
+        "play": 1.85,
+        "sigma": 1.65,
+        "spec": 1.0,
+        "percolation": 0.26,
+        "cell_jitter": 0.22,
+        "domain_stretch": (0.62, 1.34, 1.0),
     },
 }
 
@@ -173,7 +191,7 @@ def percolated_cell(cx, cy, cz, threshold):
 
 
 @ti.func
-def voronoi_cell(p, percolation):
+def voronoi_cell(p, percolation, cell_jitter):
     ix = ti.cast(ti.floor(p.x), ti.i32)
     iy = ti.cast(ti.floor(p.y), ti.i32)
     iz = ti.cast(ti.floor(p.z), ti.i32)
@@ -189,11 +207,12 @@ def voronoi_cell(p, percolation):
                 cx = ix + dx
                 cy = iy + dy
                 cz = iz + dz
+                jitter_margin = (1.0 - cell_jitter) * 0.5
                 jitter = ti.Vector(
                     [
-                        hash41(cx, cy, cz, 0) * 0.9 + 0.05,
-                        hash41(cx, cy, cz, 1) * 0.9 + 0.05,
-                        hash41(cx, cy, cz, 2) * 0.9 + 0.05,
+                        hash41(cx, cy, cz, 0) * cell_jitter + jitter_margin,
+                        hash41(cx, cy, cz, 1) * cell_jitter + jitter_margin,
+                        hash41(cx, cy, cz, 2) * cell_jitter + jitter_margin,
                     ]
                 )
                 d = ti.Vector([ti.cast(dx, ti.f32), ti.cast(dy, ti.f32), ti.cast(dz, ti.f32)]) + jitter - f
@@ -267,6 +286,10 @@ def render_atlas(
     play: ti.f32,
     sigma: ti.f32,
     spec_strength: ti.f32,
+    cell_jitter: ti.f32,
+    domain_x: ti.f32,
+    domain_y: ti.f32,
+    domain_z: ti.f32,
 ):
     radius = 0.8
     tan_half_fov = ti.tan(20.0 * math.pi / 180.0)
@@ -330,8 +353,9 @@ def render_atlas(
                         for st in range(ray_steps):
                             f = (ti.cast(st, ti.f32) + 0.5) / ti.cast(ray_steps, ti.f32)
                             p = cam + rd * (t0 + path_len * f)
-                            q = p / radius * domain_scale
-                            cx, cy, cz, boundary = voronoi_cell(q, percolation)
+                            q0 = p / radius * domain_scale
+                            q = ti.Vector([q0.x * domain_x, q0.y * domain_y, q0.z * domain_z])
+                            cx, cy, cz, boundary = voronoi_cell(q, percolation, cell_jitter)
                             crystal = hash_normal(cx, cy, cz)
                             cos_theta = ti.max(ti.abs(view.dot(crystal)), 0.035)
                             lam = 2.0 * d111 * n_eff * cos_theta
@@ -395,7 +419,7 @@ def render_one(args: argparse.Namespace, preset_name: str) -> Path:
         args.ray_steps,
         params["diameter_nm"],
         params["domain_scale"],
-        0.38,
+        params["percolation"],
         params["body"][0],
         params["body"][1],
         params["body"][2],
@@ -403,6 +427,10 @@ def render_one(args: argparse.Namespace, preset_name: str) -> Path:
         params["play"],
         params["sigma"],
         params["spec"],
+        params["cell_jitter"],
+        params["domain_stretch"][0],
+        params["domain_stretch"][1],
+        params["domain_stretch"][2],
     )
     ti.sync()
     arr = out_field.to_numpy()

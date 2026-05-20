@@ -45,7 +45,7 @@
 
   /* ─── Featured demo cards ─── */
   .featured-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;
   }
   .feature-card {
     display: block;
@@ -66,6 +66,9 @@
     text-transform: uppercase; color: var(--blue);
     border: 1px solid var(--blue);
     padding: 1px 5px; border-radius: 3px;
+  }
+  .feature-card.primary {
+    border-color: color-mix(in srgb, var(--blue) 72%, var(--border));
   }
   .feature-card .desc {
     font-size: 12px; color: var(--muted); line-height: 1.5;
@@ -134,8 +137,16 @@
   <div class="group">
     <div class="group-label">Demos</div>
     <div class="featured-grid">
+      <a class="feature-card primary" href="fast-pathtracer.html">
+        <div class="name">Fast Path Tracer <span class="pill">Flagship</span></div>
+        <div class="desc">
+          The most usable live renderer. It keeps the opal interaction immediate, includes
+          body-shape presets, and is the version to open first when exploring the material.
+        </div>
+        <div class="file">fast-pathtracer.html</div>
+      </a>
       <a class="feature-card" href="pathtracer.html">
-        <div class="name">Path Tracer <span class="pill">Live</span></div>
+        <div class="name">Spectral Reference <span class="pill">Deep</span></div>
         <div class="desc">
           Interactive renderer. Tune sphere diameter, domain scale, percolation and body
           tone, then orbit the cabochon while samples accumulate. Includes a turntable

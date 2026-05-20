@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fast Opal Path Tracer</title>
+    <script>
+      const initialQuery = new URLSearchParams(location.search);
+      if (initialQuery.get("embed") === "1") {
+        document.documentElement.classList.add("is-embed");
+      }
+      if (initialQuery.get("chrome") === "0") {
+        document.documentElement.classList.add("hide-chrome");
+      }
+    </script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #f7f3ee;
+        color: #201f1d;
+        font-family: ui-monospace, "SF Mono", "Roboto Mono", monospace;
+      }
+
+      .is-embed,
+      .is-embed body {
+        background: #080807;
+      }
+
+      .is-embed #hud {
+        display: none;
+      }
+
+      .hide-chrome #hud {
+        display: none;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: grab;
+      }
+
+      canvas:active {
+        cursor: grabbing;
+      }
+
+      #hud {
+        position: fixed;
+        left: 14px;
+        bottom: 14px;
+        z-index: 2;
+        width: min(360px, calc(100% - 28px));
+        padding: 12px 14px;
+        border: 1px solid rgba(32, 31, 29, 0.18);
+        border-radius: 8px;
+        background: rgba(255, 253, 249, 0.88);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 14px 40px rgba(72, 58, 42, 0.12);
+      }
+
+      .title {
+        margin-bottom: 8px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+        color: #59534d;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .controls {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      button {
+        flex: 1 1 0;
+        min-width: 0;
+        border: 1px solid rgba(32, 31, 29, 0.22);
+        border-radius: 6px;
+        background: #fffdf9;
+        color: #201f1d;
+        cursor: pointer;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 8px 10px;
+      }
+
+      button:hover {
+        border-color: rgba(32, 31, 29, 0.48);
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .shape-picker {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+        flex: 1 1 0;
+        min-width: 0;
+      }
+
+      .shape-option {
+        min-width: 0;
+        padding: 7px 6px;
+      }
+
+      .shape-option[aria-pressed="true"] {
+        border-color: rgba(32, 31, 29, 0.82);
+        background: #201f1d;
+        color: #fffdf9;
+      }
+
+      @media (max-width: 520px) {
+        #hud {
+          left: 10px;
+          bottom: 8px;
+          width: calc(100% - 20px);
+          padding: 8px 10px;
+        }
+
+        .title {
+          margin-bottom: 5px;
+          font-size: 10px;
+          letter-spacing: 0.06em;
+        }
+
+        .meta {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 4px 6px;
+          font-size: 10px;
+          line-height: 1.25;
+        }
+
+        .controls {
+          gap: 6px;
+          margin-top: 6px;
+        }
+
+        button {
+          padding: 6px 8px;
+          font-size: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="hud">
+      <div class="title">Fast Opal Path Trace</div>
+      <div class="meta">
+        <span id="sampleLabel">samples 0/48</span>
+        <span id="presetLabel">black opal</span>
+        <span>studio light rig</span>
+        <span id="sceneLabel">floor studio</span>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <label style="font-size:11px;color:#59534d;min-width:46px;">Shape</label>
+        <div class="shape-picker" aria-label="Opal body shape">
+          <button class="shape-option" type="button" data-shape="sphere" aria-pressed="true">Sphere</button>
+          <button class="shape-option" type="button" data-shape="oval" aria-pressed="false">Oval</button>
+          <button class="shape-option" type="button" data-shape="rounded" aria-pressed="false">Cube</button>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="reset">Reset samples</button>
+        <button id="quality">Clean 96</button>
+      </div>
+    </div>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      const canvas = document.getElementById("view");
+      const sampleLabel = document.getElementById("sampleLabel");
+      const presetLabel = document.getElementById("presetLabel");
+      const sceneLabel = document.getElementById("sceneLabel");
+      const resetButton = document.getElementById("reset");
+      const qualityButton = document.getElementById("quality");
+      const shapeButtons = Array.from(document.querySelectorAll("[data-shape]"));
+
+      const PRESETS = {
+        black: {
+          label: "black opal",
+          samples: 48,
+          regionScale: 2.35,
+          diameter: [292, 352],
+          bodyA: [0.012, 0.015, 0.014],
+          bodyB: [0.070, 0.082, 0.072],
+          fireStrength: 1.48,
+          colorMix: 0.62,
+          edgeStrength: 0.24,
+          edgeWidth: 0.15,
+          cellJitter: 0.90,
+          domainStretch: [1.0, 1.0, 1.0],
+          blueBoost: 0.58,
+          multiScale: 0.18,
+          darkPatches: 0.35,
+        },
+        white: {
+          label: "white opal",
+          samples: 48,
+          regionScale: 2.05,
+          diameter: [248, 312],
+          bodyA: [0.62, 0.60, 0.54],
+          bodyB: [0.92, 0.86, 0.74],
+          fireStrength: 0.56,
+          colorMix: 0.82,
+          edgeStrength: 0.10,
+          edgeWidth: 0.18,
+          cellJitter: 0.82,
+          domainStretch: [1.0, 1.0, 1.0],
+          blueBoost: 0.42,
+          multiScale: 0.0,
+          darkPatches: 0.0,
+        },
+        fire: {
+          label: "fire opal",
+          samples: 48,
+          regionScale: 2.22,
+          diameter: [312, 372],
+          bodyA: [0.014, 0.010, 0.008],
+          bodyB: [0.88, 0.26, 0.030],
+          fireStrength: 1.28,
+          colorMix: 0.90,
+          edgeStrength: 0.36,
+          edgeWidth: 0.12,
+          cellJitter: 0.85,
+          domainStretch: [1.0, 1.0, 1.0],
+          blueBoost: 0.82,
+          multiScale: 0.65,
+          darkPatches: 0.75,
+        },
+        harlequin: {
+          label: "harlequin opal",
+          samples: 48,
+          regionScale: 1.85,
+          diameter: [218, 382],
+          bodyA: [0.006, 0.006, 0.014],
+          bodyB: [0.040, 0.030, 0.055],
+          fireStrength: 2.10,
+          colorMix: 0.96,
+          edgeStrength: 0.38,
+          edgeWidth: 0.10,
+          cellJitter: 0.22,
+          domainStretch: [0.62, 1.34, 1.0],
+          blueBoost: 2.10,
+          multiScale: 0.28,
+          darkPatches: 0.88,
+        },
+      };
+
+      const query = new URLSearchParams(location.search);
+      const compact = query.get("embed") === "1";
+      const heroMode = query.get("chrome") === "0" && !compact;
+      const presetKey = PRESETS[query.get("preset")] ? query.get("preset") : "black";
+      const preset = PRESETS[presetKey];
+      const SHAPES = {
+        sphere: { type: 0.0, scale: [1.0, 1.0, 1.0] },
+        oval: { type: 1.0, scale: [1.18, 0.86, 0.70] },
+        rounded: { type: 2.0, scale: [1.0, 1.0, 1.0] },
+      };
+      let shapeKey = SHAPES[query.get("shape")] ? query.get("shape") : "sphere";
+      presetLabel.textContent = preset.label;
+      sceneLabel.textContent = compact ? "dark embed" : heroMode ? "article studio" : "floor studio";
+
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: false,
+        powerPreference: "high-performance",
+      });
+      renderer.setPixelRatio(1);
+      renderer.autoClear = false;
+
+      const camera = new THREE.PerspectiveCamera(36, 1, 0.05, 40);
+      camera.position.set(0.0, heroMode ? 0.1 : 0.15, heroMode ? 3.9 : 3.45);
+
+      const controls = new OrbitControls(camera, canvas);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.rotateSpeed = 0.55;
+      controls.zoomSpeed = 0.7;
+      controls.enablePan = false;
+      controls.minDistance = heroMode ? 2.6 : 2.1;
+      controls.maxDistance = 6.0;
+      controls.target.set(0, 0, 0);
+
+      let width = 1;
+      let height = 1;
+      let sampleCount = 0;
+      let maxSamples = compact ? Math.min(preset.samples, 32) : preset.samples;
+      let regionScale = preset.regionScale;
+      let frameSeed = Math.random() * 1000;
+      let lastCamera = new THREE.Matrix4();
+      let targets = [];
+
+      const vertexShader = `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+      `;
+
+      const pathTraceShader = `
+        precision highp float;
+
+        varying vec2 vUv;
+        uniform sampler2D uAccum;
+        uniform vec2 uResolution;
+        uniform float uFrame;
+        uniform float uSampleCount;
+        uniform float uRegionScale;
+        uniform vec2 uDiameterRange;
+        uniform vec3 uBodyA;
+        uniform vec3 uBodyB;
+        uniform float uFireStrength;
+        uniform float uColorMix;
+        uniform float uEdgeStrength;
+        uniform float uEdgeWidth;
+        uniform float uCellJitter;
+        uniform vec3 uDomainStretch;
+        uniform float uEmbedMode;
+        uniform float uBlueBoost;
+        uniform float uMultiScale;
+        uniform float uDarkPatches;
+        uniform float uShapeType;
+        uniform vec3 uShapeScale;
+        uniform mat4 uInvProjection;
+        uniform mat4 uCameraWorld;
+        uniform vec3 uCameraPos;
+
+        const float PI = 3.14159265359;
+        const vec3 SPHERE_CENTER = vec3(0.0, 0.02, 0.0);
+        const float SPHERE_RADIUS = 0.82;
+        const float FLOOR_Y = -0.86;
+
+        float hash13(vec3 p) {
+          p = fract(p * 0.1031);
+          p += dot(p, p.yzx + 33.33);
+          return fract((p.x + p.y) * p.z);
+        }
+
+        float rand(vec2 p) {
+          vec3 q = vec3(p, uFrame + 17.17);
+          return hash13(q);
+        }
+
+        vec3 hash33(vec3 p) {
+          return vec3(
+            hash13(p + vec3(3.1, 17.7, 91.2)),
+            hash13(p + vec3(49.2, 5.4, 12.7)),
+            hash13(p + vec3(8.6, 72.1, 31.3))
+          );
+        }
+
+        float sphereHit(vec3 ro, vec3 rd, vec3 c, float r, out float t0, out float t1) {
+          vec3 oc = ro - c;
+          float b = dot(oc, rd);
+          float h = b * b - dot(oc, oc) + r * r;
+          if (h < 0.0) return 0.0;
+          h = sqrt(h);
+          t0 = -b - h;
+          t1 = -b + h;
+          return t1 > 0.001 ? 1.0 : 0.0;
+        }
+
+        float ellipsoidHit(vec3 ro, vec3 rd, out float t0, out float t1) {
+          vec3 radii = max(SPHERE_RADIUS * uShapeScale, vec3(0.001));
+          vec3 oc = (ro - SPHERE_CENTER) / radii;
+          vec3 d = rd / radii;
+          float a = dot(d, d);
+          float b = 2.0 * dot(oc, d);
+          float c = dot(oc, oc) - 1.0;
+          float h = b * b - 4.0 * a * c;
+          if (h < 0.0) return 0.0;
+          h = sqrt(h);
+          t0 = (-b - h) / (2.0 * a);
+          t1 = (-b + h) / (2.0 * a);
+          return t1 > 0.001 ? 1.0 : 0.0;
+        }
+
+        vec3 safeInvDir(vec3 rd) {
+          return vec3(
+            1.0 / (abs(rd.x) < 0.00001 ? (rd.x < 0.0 ? -0.00001 : 0.00001) : rd.x),
+            1.0 / (abs(rd.y) < 0.00001 ? (rd.y < 0.0 ? -0.00001 : 0.00001) : rd.y),
+            1.0 / (abs(rd.z) < 0.00001 ? (rd.z < 0.0 ? -0.00001 : 0.00001) : rd.z)
+          );
+        }
+
+        float roundedBoxRadius() {
+          return SPHERE_RADIUS * 0.18;
+        }
+
+        vec3 roundedBoxHalfSize() {
+          return SPHERE_RADIUS * 0.62 * uShapeScale;
+        }
+
+        float roundedBoxSdf(vec3 p) {
+          vec3 q = abs(p - SPHERE_CENTER) - roundedBoxHalfSize();
+          return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - roundedBoxRadius();
+        }
+
+        float roundedBoxBoundsHit(vec3 ro, vec3 rd, out float tNear, out float tFar) {
+          vec3 outer = roundedBoxHalfSize() + vec3(roundedBoxRadius());
+          vec3 invRd = safeInvDir(rd);
+          vec3 tA = (SPHERE_CENTER - outer - ro) * invRd;
+          vec3 tB = (SPHERE_CENTER + outer - ro) * invRd;
+          vec3 tMin = min(tA, tB);
+          vec3 tMax = max(tA, tB);
+          tNear = max(max(tMin.x, tMin.y), tMin.z);
+          tFar = min(min(tMax.x, tMax.y), tMax.z);
+          return tFar > max(tNear, 0.001) ? 1.0 : 0.0;
+        }
+
+        float roundedBoxHit(vec3 ro, vec3 rd, out float t0, out float t1) {
+          float boundNear;
+          float boundFar;
+          if (roundedBoxBoundsHit(ro, rd, boundNear, boundFar) < 0.5) return 0.0;
+          float t = max(boundNear, 0.001);
+          float entry = -1.0;
+          for (int i = 0; i < 72; i++) {
+            vec3 p = ro + rd * t;
+            float d = roundedBoxSdf(p);
+            if (d < 0.001) {
+              entry = t;
+              break;
+            }
+            t += max(d * 0.72, 0.004);
+            if (t > boundFar) break;
+          }
+          if (entry < 0.0) return 0.0;
+          float exitT = boundFar;
+          float stepLen = max((boundFar - entry) / 56.0, 0.004);
+          t = entry + stepLen;
+          for (int i = 0; i < 56; i++) {
+            if (roundedBoxSdf(ro + rd * t) > 0.0) {
+              exitT = t;
+              break;
+            }
+            t += stepLen;
+            if (t > boundFar) break;
+          }
+          t0 = entry;
+          t1 = exitT;
+          return 1.0;
+        }
+
+        float shapeHit(vec3 ro, vec3 rd, out float t0, out float t1) {
+          if (uShapeType < 1.5) {
+            return ellipsoidHit(ro, rd, t0, t1);
+          }
+          return roundedBoxHit(ro, rd, t0, t1);
+        }
+
+        vec3 shapeNormal(vec3 p) {
+          if (uShapeType < 1.5) {
+            vec3 radii = max(SPHERE_RADIUS * uShapeScale, vec3(0.001));
+            return normalize((p - SPHERE_CENTER) / (radii * radii));
+          }
+          vec2 e = vec2(0.0015, 0.0);
+          return normalize(vec3(
+            roundedBoxSdf(p + e.xyy) - roundedBoxSdf(p - e.xyy),
+            roundedBoxSdf(p + e.yxy) - roundedBoxSdf(p - e.yxy),
+            roundedBoxSdf(p + e.yyx) - roundedBoxSdf(p - e.yyx)
+          ));
+        }
+
+        float planeHit(vec3 ro, vec3 rd) {
+          if (abs(rd.y) < 0.0001) return -1.0;
+          float t = (FLOOR_Y - ro.y) / rd.y;
+          return t > 0.001 ? t : -1.0;
+        }
+
+        vec3 wavelengthToRGB(float nm) {
+          float r = 0.0;
+          float g = 0.0;
+          float b = 0.0;
+
+          if (nm >= 380.0 && nm < 440.0) { r = -(nm - 440.0) / 60.0; b = 1.0; }
+          else if (nm < 490.0) { g = (nm - 440.0) / 50.0; b = 1.0; }
+          else if (nm < 510.0) { g = 1.0; b = -(nm - 510.0) / 20.0; }
+          else if (nm < 580.0) { r = (nm - 510.0) / 70.0; g = 1.0; }
+          else if (nm < 645.0) { r = 1.0; g = -(nm - 645.0) / 65.0; }
+          else if (nm <= 780.0) { r = 1.0; }
+
+          float f = 1.0;
+          if (nm < 420.0) f = 0.3 + 0.7 * (nm - 380.0) / 40.0;
+          if (nm > 700.0) f = 0.3 + 0.7 * (780.0 - nm) / 80.0;
+          return max(vec3(r, g, b) * f, 0.0);
+        }
+
+        void domainAtScaled(vec3 p, float scaleMult, vec3 offset, out vec3 crystalNormal, out float edge, out float variant) {
+          vec3 q = p * uRegionScale * scaleMult * uDomainStretch + offset;
+          vec3 base = floor(q);
+          vec3 f = fract(q);
+          float d1 = 1000.0;
+          float d2 = 1000.0;
+          vec3 bestCell = base;
+
+          for (int x = -1; x <= 1; x++) {
+            for (int y = -1; y <= 1; y++) {
+              for (int z = -1; z <= 1; z++) {
+                vec3 cell = base + vec3(float(x), float(y), float(z));
+                vec3 h = hash33(cell);
+                float margin = (1.0 - uCellJitter) * 0.5;
+                vec3 site = vec3(float(x), float(y), float(z)) + h * uCellJitter + vec3(margin) - f;
+                float d = dot(site, site);
+                if (d < d1) {
+                  d2 = d1;
+                  d1 = d;
+                  bestCell = cell;
+                } else if (d < d2) {
+                  d2 = d;
+                }
+              }
+            }
+          }
+
+          vec3 h = hash33(bestCell + vec3(11.0, 23.0, 41.0));
+          crystalNormal = normalize(h * 2.0 - 1.0);
+          edge = 1.0 - smoothstep(0.025, uEdgeWidth, d2 - d1);
+          variant = hash13(bestCell + vec3(71.0, 19.0, 5.0));
+        }
+
+        void domainAt(vec3 p, out vec3 crystalNormal, out float edge, out float variant) {
+          domainAtScaled(p, 1.0, vec3(0.0, 1.37, 0.0), crystalNormal, edge, variant);
+        }
+
+        vec3 envLight(vec3 dir) {
+          vec3 warm = vec3(1.05, 0.99, 0.90);
+          vec3 cool = vec3(0.84, 0.90, 0.98);
+          vec3 room = mix(warm, cool, smoothstep(-0.2, 0.9, dir.y));
+          vec3 keyDir = normalize(vec3(-0.45, 0.76, 0.42));
+          vec3 fillDir = normalize(vec3(0.70, 0.45, -0.45));
+          vec3 topDir = normalize(vec3(0.0, 1.0, 0.0));
+          float key = pow(max(dot(dir, keyDir), 0.0), 42.0) * 4.2;
+          float fill = pow(max(dot(dir, fillDir), 0.0), 18.0) * 0.72;
+          float top = pow(max(dot(dir, topDir), 0.0), 24.0) * 1.2;
+          return room * 0.70 + vec3(1.0, 0.94, 0.84) * key + vec3(0.78, 0.85, 1.0) * fill + vec3(1.0) * top;
+        }
+
+        float softShadow(vec3 p, vec3 lightDir) {
+          float t0;
+          float t1;
+          float s = 1.0;
+          vec3 origin = p + lightDir * 0.035;
+          vec3 side = normalize(cross(lightDir, vec3(0.0, 1.0, 0.0)));
+          if (length(side) < 0.1) side = vec3(1.0, 0.0, 0.0);
+          vec3 up = normalize(cross(side, lightDir));
+          for (int i = 0; i < 5; i++) {
+            float a = float(i) * 1.256637;
+            vec3 l = normalize(lightDir + side * cos(a) * 0.06 + up * sin(a) * 0.06);
+            if (shapeHit(origin, l, t0, t1) > 0.5) s -= 0.13;
+          }
+          return clamp(s, 0.35, 1.0);
+        }
+
+        vec3 opalSample(vec3 p, vec3 rd, vec3 surfN, float sampleIndex) {
+          vec3 crystalN;
+          float edge;
+          float variant;
+          domainAt(p, crystalN, edge, variant);
+
+          vec3 l1 = normalize(vec3(-0.45, 0.76, 0.42));
+          vec3 l2 = normalize(vec3(0.55, 0.62, -0.35));
+          vec3 h1 = normalize(l1 - rd);
+          vec3 h2 = normalize(l2 - rd);
+          float c1 = abs(dot(crystalN, h1));
+          float c2 = abs(dot(crystalN, h2));
+
+          float diameter = mix(uDiameterRange.x, uDiameterRange.y, variant);
+          float d111 = diameter * 0.8165;
+          float lambda1 = 2.0 * d111 * 1.33 * c1;
+          float lambda2 = 2.0 * d111 * 1.33 * c2;
+
+          vec3 spec1 = wavelengthToRGB(lambda1);
+          vec3 spec2 = wavelengthToRGB(lambda2);
+          float blue1 = 1.0 - smoothstep(500.0, 630.0, lambda1);
+          float blue2 = 1.0 - smoothstep(500.0, 630.0, lambda2);
+          spec1 *= vec3(1.0, 1.0 + 0.20 * uBlueBoost * blue1, 1.0 + uBlueBoost * blue1);
+          spec2 *= vec3(1.0, 1.0 + 0.20 * uBlueBoost * blue2, 1.0 + uBlueBoost * blue2);
+
+          vec3 bragg = spec1 * smoothstep(370.0, 430.0, lambda1) * (1.0 - smoothstep(720.0, 790.0, lambda1));
+          bragg += spec2 * 0.45 * smoothstep(370.0, 430.0, lambda2) * (1.0 - smoothstep(720.0, 790.0, lambda2));
+
+          float align = max(c1, c2);
+          float flashMask = smoothstep(mix(0.42, 0.60, uDarkPatches), 0.97, align);
+          bragg *= uFireStrength * (0.18 + 0.82 * flashMask);
+
+          if (uMultiScale > 0.001) {
+            vec3 fineN;
+            float fineEdge;
+            float fineVariant;
+            domainAtScaled(p, 2.65, vec3(17.3, 4.1, 9.7), fineN, fineEdge, fineVariant);
+            float c3 = max(abs(dot(fineN, h1)), abs(dot(fineN, h2)));
+            float fineDiameter = mix(220.0, 326.0, fineVariant);
+            float fineLambda = 2.0 * fineDiameter * 0.8165 * 1.33 * c3;
+            vec3 fineSpec = wavelengthToRGB(fineLambda);
+            float fineBlue = 1.0 - smoothstep(500.0, 630.0, fineLambda);
+            fineSpec *= vec3(1.0, 1.0 + 0.25 * uBlueBoost * fineBlue, 1.0 + 1.35 * uBlueBoost * fineBlue);
+            float fineMask = smoothstep(0.35, 0.88, c3) * (0.20 + 0.80 * fineEdge);
+            bragg += fineSpec * fineMask * uFireStrength * uMultiScale;
+          }
+
+          float braggLum = dot(bragg, vec3(0.2126, 0.7152, 0.0722));
+          bragg = max(mix(vec3(braggLum), bragg, 1.0 + 0.34 * uBlueBoost), 0.0);
+
+          float lamGlow = pow(flashMask, 1.35);
+          vec3 body = mix(uBodyA, uBodyB, 0.35 + 0.4 * variant);
+          float darkCell = smoothstep(0.42, 0.64, variant);
+          body *= mix(1.0, mix(0.10, 1.0, darkCell), uDarkPatches);
+          bragg *= mix(1.0, mix(0.26, 1.12, darkCell), uDarkPatches);
+          vec3 raw = body + bragg * (0.12 + 2.65 * lamGlow);
+          raw += edge * mix(vec3(0.42, 0.34, 0.22), bragg + vec3(0.08), 0.35) * uEdgeStrength;
+          vec3 cell = mix(body, raw, uColorMix);
+          cell *= 0.72 + 0.28 * max(dot(surfN, l1), 0.0);
+          return cell;
+        }
+
+        vec3 trace(vec3 ro, vec3 rd) {
+          vec3 lightDir = normalize(vec3(-0.45, 0.76, 0.42));
+          float s0;
+          float s1;
+          float hasSphere = shapeHit(ro, rd, s0, s1);
+          if (hasSphere > 0.5 && s1 > 0.0) {
+            float entryT = max(s0, 0.001);
+            vec3 entry = ro + rd * entryT;
+            vec3 exitP = ro + rd * s1;
+            vec3 n = shapeNormal(entry);
+
+            vec3 color = vec3(0.0);
+            const int MAX_STEPS = 6;
+            for (int i = 0; i < MAX_STEPS; i++) {
+              float j = rand(gl_FragCoord.xy + vec2(float(i) * 13.1, float(i) * 7.7));
+              float t = (float(i) + j) / float(MAX_STEPS);
+              vec3 p = mix(entry, exitP, t);
+              color += opalSample(p, rd, n, float(i));
+            }
+            color /= float(MAX_STEPS);
+
+            float fresnel = pow(1.0 - max(dot(-rd, n), 0.0), 5.0);
+            vec3 refl = envLight(reflect(rd, n));
+            float forward = max(dot(n, lightDir), 0.0);
+            float rim = pow(1.0 - max(dot(-rd, n), 0.0), 2.0);
+            vec3 glass = refl * (0.10 + 0.38 * fresnel) + vec3(1.0, 0.94, 0.84) * pow(forward, 28.0) * 0.16;
+            glass *= mix(1.0, 0.42, uEmbedMode);
+            return color * (0.82 + 0.22 * forward + 0.14 * rim) + glass;
+          }
+
+          float floorT = planeHit(ro, rd);
+          if (uEmbedMode < 0.5 && floorT > 0.0) {
+            vec3 p = ro + rd * floorT;
+            float shadow = softShadow(p, lightDir);
+            vec2 gridUv = abs(fract(p.xz * 2.0) - 0.5);
+            float gridLine = 1.0 - smoothstep(0.0, 0.018, min(gridUv.x, gridUv.y));
+            vec3 base = mix(vec3(0.78, 0.74, 0.68), vec3(0.62, 0.58, 0.52), gridLine * 0.16);
+            float lambert = 0.72 + 0.28 * max(dot(vec3(0.0, 1.0, 0.0), lightDir), 0.0);
+            return base * lambert * shadow;
+          }
+
+          if (uEmbedMode > 0.5) return vec3(0.006, 0.006, 0.005);
+          float sky = smoothstep(-0.35, 0.85, rd.y);
+          return mix(vec3(0.72, 0.69, 0.64), vec3(0.98, 0.95, 0.88), sky);
+        }
+
+        vec3 tonemap(vec3 c) {
+          c = max(c, 0.0);
+          c = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+          return pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2));
+        }
+
+        void main() {
+          vec2 jitter = vec2(
+            rand(gl_FragCoord.xy + vec2(9.2, 1.7)),
+            rand(gl_FragCoord.xy + vec2(3.4, 8.1))
+          ) - 0.5;
+          vec2 ndc = (gl_FragCoord.xy + jitter) / uResolution * 2.0 - 1.0;
+          vec4 clip = vec4(ndc, -1.0, 1.0);
+          vec4 view = uInvProjection * clip;
+          view = vec4(view.xy, -1.0, 0.0);
+          vec3 rd = normalize((uCameraWorld * view).xyz);
+
+          vec3 color = trace(uCameraPos, rd);
+          vec3 prev = texture2D(uAccum, vUv).rgb;
+          float n = uSampleCount;
+          gl_FragColor = vec4((prev * n + color) / (n + 1.0), 1.0);
+        }
+      `;
+
+      const displayShader = `
+        precision highp float;
+        varying vec2 vUv;
+        uniform sampler2D uTexture;
+
+        vec3 tonemap(vec3 c) {
+          c = max(c, 0.0);
+          c = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+          return pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2));
+        }
+
+        void main() {
+          vec3 color = texture2D(uTexture, vUv).rgb;
+          gl_FragColor = vec4(tonemap(color), 1.0);
+        }
+      `;
+
+      const traceMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: pathTraceShader,
+        uniforms: {
+          uAccum: { value: null },
+          uResolution: { value: new THREE.Vector2(1, 1) },
+          uFrame: { value: 0 },
+          uSampleCount: { value: 0 },
+          uRegionScale: { value: regionScale },
+          uDiameterRange: { value: new THREE.Vector2(preset.diameter[0], preset.diameter[1]) },
+          uBodyA: { value: new THREE.Vector3(...preset.bodyA) },
+          uBodyB: { value: new THREE.Vector3(...preset.bodyB) },
+          uFireStrength: { value: preset.fireStrength },
+          uColorMix: { value: preset.colorMix },
+          uEdgeStrength: { value: preset.edgeStrength },
+          uEdgeWidth: { value: preset.edgeWidth },
+          uCellJitter: { value: preset.cellJitter },
+          uDomainStretch: { value: new THREE.Vector3(...preset.domainStretch) },
+          uEmbedMode: { value: compact ? 1.0 : 0.0 },
+          uBlueBoost: { value: preset.blueBoost },
+          uMultiScale: { value: preset.multiScale },
+          uDarkPatches: { value: preset.darkPatches },
+          uShapeType: { value: SHAPES[shapeKey].type },
+          uShapeScale: { value: new THREE.Vector3(...SHAPES[shapeKey].scale) },
+          uInvProjection: { value: new THREE.Matrix4() },
+          uCameraWorld: { value: new THREE.Matrix4() },
+          uCameraPos: { value: new THREE.Vector3() },
+        },
+        depthWrite: false,
+        depthTest: false,
+      });
+
+      const displayMaterial = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader: displayShader,
+        uniforms: {
+          uTexture: { value: null },
+        },
+        depthWrite: false,
+        depthTest: false,
+      });
+
+      const quadGeo = new THREE.PlaneGeometry(2, 2);
+      const traceScene = new THREE.Scene();
+      traceScene.add(new THREE.Mesh(quadGeo, traceMaterial));
+      const displayScene = new THREE.Scene();
+      displayScene.add(new THREE.Mesh(quadGeo, displayMaterial));
+      const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      function makeTarget(w, h) {
+        return new THREE.WebGLRenderTarget(w, h, {
+          type: THREE.HalfFloatType,
+          format: THREE.RGBAFormat,
+          depthBuffer: false,
+          stencilBuffer: false,
+          magFilter: THREE.NearestFilter,
+          minFilter: THREE.NearestFilter,
+        });
+      }
+
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        const maxDim = Math.max(rect.width, rect.height, 1);
+        const scale = Math.min(1, 880 / maxDim);
+        width = Math.max(2, Math.floor(rect.width * scale));
+        height = Math.max(2, Math.floor(rect.height * scale));
+        renderer.setSize(rect.width, rect.height, false);
+        renderer.setDrawingBufferSize(width, height, 1);
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        for (const target of targets) target.dispose();
+        targets = [makeTarget(width, height), makeTarget(width, height)];
+        traceMaterial.uniforms.uResolution.value.set(width, height);
+        reset();
+      }
+
+      function clearTargets() {
+        for (const target of targets) {
+          renderer.setRenderTarget(target);
+          renderer.clearColor();
+        }
+        renderer.setRenderTarget(null);
+      }
+
+      function reset() {
+        sampleCount = 0;
+        frameSeed = Math.random() * 1000;
+        clearTargets();
+        sampleLabel.textContent = `samples 0/${maxSamples}`;
+      }
+
+      resetButton.addEventListener("click", reset);
+      function applyShape(nextShapeKey) {
+        shapeKey = SHAPES[nextShapeKey] ? nextShapeKey : "sphere";
+        const shape = SHAPES[shapeKey];
+        traceMaterial.uniforms.uShapeType.value = shape.type;
+        traceMaterial.uniforms.uShapeScale.value.set(shape.scale[0], shape.scale[1], shape.scale[2]);
+        for (const button of shapeButtons) {
+          button.setAttribute("aria-pressed", button.dataset.shape === shapeKey ? "true" : "false");
+        }
+        reset();
+      }
+
+      for (const button of shapeButtons) {
+        button.addEventListener("click", () => applyShape(button.dataset.shape));
+      }
+      applyShape(shapeKey);
+
+      qualityButton.addEventListener("click", () => {
+        if (maxSamples === preset.samples) {
+          maxSamples = compact ? 48 : 96;
+          regionScale = preset.regionScale * 1.12;
+          qualityButton.textContent = "Fast 48";
+        } else {
+          maxSamples = preset.samples;
+          regionScale = preset.regionScale;
+          qualityButton.textContent = "Clean 96";
+        }
+        traceMaterial.uniforms.uRegionScale.value = regionScale;
+        reset();
+      });
+
+      window.addEventListener("resize", resize);
+      resize();
+      lastCamera.copy(camera.matrixWorld);
+
+      function cameraMoved() {
+        const a = lastCamera.elements;
+        const b = camera.matrixWorld.elements;
+        for (let i = 0; i < 16; i++) {
+          if (Math.abs(a[i] - b[i]) > 0.00001) return true;
+        }
+        return false;
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+
+        if (cameraMoved()) {
+          lastCamera.copy(camera.matrixWorld);
+          reset();
+        }
+
+        if (sampleCount < maxSamples) {
+          traceMaterial.uniforms.uAccum.value = targets[0].texture;
+          traceMaterial.uniforms.uFrame.value = frameSeed + sampleCount;
+          traceMaterial.uniforms.uSampleCount.value = sampleCount;
+          traceMaterial.uniforms.uInvProjection.value.copy(camera.projectionMatrixInverse);
+          traceMaterial.uniforms.uCameraWorld.value.copy(camera.matrixWorld);
+          traceMaterial.uniforms.uCameraPos.value.copy(camera.position);
+
+          renderer.setRenderTarget(targets[1]);
+          renderer.render(traceScene, quadCamera);
+          renderer.setRenderTarget(null);
+
+          targets.reverse();
+          sampleCount += 1;
+          sampleLabel.textContent = `samples ${sampleCount}/${maxSamples}`;
+        }
+
+        displayMaterial.uniforms.uTexture.value = targets[0].texture;
+        renderer.render(displayScene, quadCamera);
+      }
+
+      animate();
+    </script>
+  </body>
+</html>

@@ -10,6 +10,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: 'index.html',
+        fastPathtracer: 'fast-pathtracer.html',
         pathtracer: 'pathtracer.html',
         scroll: 'scroll.html',
       },
