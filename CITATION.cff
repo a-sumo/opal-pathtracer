@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this renderer, please cite it using the metadata below."
+title: "Opal Path Tracer"
+type: software
+authors:
+  - family-names: "Sumo"
+    given-names: "Armand"
+repository-code: "https://github.com/a-sumo/opal-pathtracer"
+url: "https://github.com/a-sumo/opal-pathtracer"
+license: "MIT"
+date-released: "2026-05-20"
+version: "1.0.0"
+preferred-citation:
+  type: generic
+  authors:
+    - family-names: "Sumo"
+      given-names: "Armand"
+  title: "Opal Path Tracer"
+  year: 2026
+  url: "https://github.com/a-sumo/opal-pathtracer"

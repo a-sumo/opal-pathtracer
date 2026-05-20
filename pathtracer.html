@@ -998,6 +998,7 @@ const TT = {
   active: false, paused: false,
   angles: 72, samplesPerAngle: 128,
   distance: 2.70,  // camera is locked to the equator (y=0) for frontal turntable recording
+  elevationDeg: 0,
   cols: 12, frameSize: 512,
   format: 'webp',        // 'webp' | 'jpeg'. WebP at q90 is ~14% smaller than
                          // JPG q90 with no visible loss on sparkle — default.
@@ -1008,12 +1009,14 @@ const TT = {
 const TT_EXPORT = { active: false, cancelled: false, frame: 0, total: 0 };
 
 function ttApplyCamera() {
-  // Frontal turntable: camera orbits the opal at y=0 so the sphere's equator
-  // always passes through the centre of the frame. No elevation — this is the
-  // camera layout that atlas viewers assume.
+  // Default turntable: camera orbits the opal at y=0 so the sphere's equator
+  // passes through the centre of the frame. Headless capture can pass an
+  // elevation to build simple multiview rigs while keeping the same baked opal.
   const a = (TT.currentAngle / TT.angles) * Math.PI * 2;
+  const elev = (TT.elevationDeg || 0) * Math.PI / 180;
   const r = TT.distance;
-  cam.position.set(r * Math.sin(a), 0, r * Math.cos(a));
+  const ringR = r * Math.cos(elev);
+  cam.position.set(ringR * Math.sin(a), r * Math.sin(elev), ringR * Math.cos(a));
   cam.lookAt(0, 0, 0);
   cam.updateMatrixWorld();
 }
@@ -1274,6 +1277,7 @@ async function prepareTurntableFrame(cfg = {}) {
   TT.samplesPerAngle = cfg.samples ?? TT.samplesPerAngle;
   TT.frameSize = cfg.frameSize ?? TT.frameSize;
   TT.distance = cfg.distance ?? TT.distance;
+  TT.elevationDeg = cfg.elevationDeg ?? TT.elevationDeg ?? 0;
   TT.currentAngle = cfg.angleIndex ?? TT.currentAngle;
   TT.paused = true;
 

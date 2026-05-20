@@ -3,8 +3,10 @@
 Run:
     modal run modal_render.py --samples 100 --output-dir renders/opal-100spp-frames
 
-Each Modal task renders one turntable angle, returns one image, and the local
-entrypoint writes those frames to disk. Stitching can happen separately.
+The original path spawned one Modal task per angle, which made every still
+image pay for a fresh browser load and opal volume bake. The default path now
+spawns one task per small angle batch: each task bakes once, captures several
+views, and returns those images for local stitching.
 """
 
 from __future__ import annotations
@@ -95,6 +97,7 @@ def render_frame(
     angles: int = 72,
     frame_size: int = 512,
     preset: str = "black",
+    preset_defaults: bool = True,
     fmt: str = "webp",
     quality: int = 90,
 ) -> dict:
@@ -138,6 +141,8 @@ def render_frame(
             "--preset",
             preset,
         ]
+        if preset_defaults:
+            cmd.append("--preset-defaults")
         render_proc = subprocess.Popen(
             cmd,
             cwd="/app",
@@ -176,45 +181,190 @@ def render_frame(
             server.kill()
 
 
+@app.function(timeout=7200, cpu=4.0, memory=4096)
+def render_frame_batch(
+    angle_start: int,
+    angle_count: int = 12,
+    samples: int = 100,
+    angles: int = 72,
+    frame_size: int = 512,
+    preset: str = "black",
+    preset_defaults: bool = True,
+    fmt: str = "webp",
+    quality: int = 90,
+    view_mode: str = "turntable",
+    yaw_angles: int = 0,
+    pitch_rows: int = 1,
+    pitch_min: float = 0.0,
+    pitch_max: float = 0.0,
+) -> dict:
+    env = os.environ.copy()
+    env["PUPPETEER_EXECUTABLE_PATH"] = "/usr/bin/chromium"
+    env["OPAL_URL"] = "http://127.0.0.1:4200/pathtracer.html"
+
+    server = subprocess.Popen(
+        ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "4200"],
+        cwd="/app",
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    try:
+        _wait_for_vite(env["OPAL_URL"])
+        output_dir = Path(f"/tmp/opal-{preset}-batch-{angle_start:04d}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "node",
+            "scripts/render-turntable.mjs",
+            "frames",
+            "--url",
+            env["OPAL_URL"],
+            "--output-dir",
+            str(output_dir),
+            "--samples",
+            str(samples),
+            "--angle-start",
+            str(angle_start),
+            "--angle-count",
+            str(angle_count),
+            "--angles",
+            str(angles),
+            "--frame",
+            str(frame_size),
+            "--format",
+            fmt,
+            "--quality",
+            str(quality),
+            "--preset",
+            preset,
+            "--view-mode",
+            view_mode,
+            "--yaw-angles",
+            str(yaw_angles or angles),
+            "--pitch-rows",
+            str(pitch_rows),
+            f"--pitch-min={pitch_min}",
+            f"--pitch-max={pitch_max}",
+        ]
+        if preset_defaults:
+            cmd.append("--preset-defaults")
+        render_proc = subprocess.Popen(
+            cmd,
+            cwd="/app",
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert render_proc.stdout is not None
+        try:
+            for line in render_proc.stdout:
+                print(line, end="", flush=True)
+            returncode = render_proc.wait(timeout=7000)
+        except subprocess.TimeoutExpired as err:
+            render_proc.kill()
+            raise TimeoutError("Batch render subprocess timed out") from err
+        if returncode != 0:
+            raise RuntimeError(f"Batch render failed with exit code {returncode}")
+
+        frames = []
+        for file_path in sorted(output_dir.iterdir()):
+            if not file_path.is_file():
+                continue
+            data = file_path.read_bytes()
+            frames.append(
+                {
+                    "filename": file_path.name,
+                    "data": data,
+                    "bytes": len(data),
+                }
+            )
+        return {
+            "preset": preset,
+            "angle_start": angle_start,
+            "angle_count": angle_count,
+            "frames": frames,
+        }
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+
+
 @app.local_entrypoint()
 def main(
     samples: int = 100,
     output_dir: str = "renders/opal-100spp-frames",
     angles: int = 72,
     frame_size: int = 512,
-    preset: str = "black",
+    presets: str = "black",
     fmt: str = "webp",
     quality: int = 90,
-    concurrency: int = 24,
+    concurrency: int = 6,
+    batch_size: int = 12,
+    preset_defaults: bool = True,
+    view_mode: str = "turntable",
+    yaw_angles: int = 0,
+    pitch_rows: int = 1,
+    pitch_min: float = 0.0,
+    pitch_max: float = 0.0,
 ) -> None:
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    preset_names = [name.strip() for name in presets.split(",") if name.strip()]
+    if not preset_names:
+        raise ValueError("At least one preset is required")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
 
-    pending = []
-    complete = 0
-    for angle_index in range(angles):
-      call = render_frame.spawn(
-          angle_index,
-          samples=samples,
-          angles=angles,
-          frame_size=frame_size,
-          preset=preset,
-          fmt=fmt,
-          quality=quality,
-      )
-      pending.append(call)
-      if len(pending) >= concurrency:
-          result = pending.pop(0).get()
-          out = out_dir / result["filename"]
-          out.write_bytes(result["data"])
-          complete += 1
-          mb = result["bytes"] / 1024 / 1024
-          print(f"[{complete}/{angles}] saved {out} ({mb:.2f} MB)")
+    yaw_count = yaw_angles or angles
+    total_frames = yaw_count * pitch_rows if view_mode == "multiview" else angles
 
-    for call in pending:
-        result = call.get()
-        out = out_dir / result["filename"]
-        out.write_bytes(result["data"])
-        complete += 1
-        mb = result["bytes"] / 1024 / 1024
-        print(f"[{complete}/{angles}] saved {out} ({mb:.2f} MB)")
+    for preset in preset_names:
+        out_dir = Path(output_dir) / preset if len(preset_names) > 1 else Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        pending = []
+        complete = 0
+        print(
+            f"=== preset {preset}: {total_frames} frames @ {samples} spp "
+            f"({view_mode}, batches of {batch_size}) ==="
+        )
+        for angle_start in range(0, total_frames, batch_size):
+            count = min(batch_size, total_frames - angle_start)
+            call = render_frame_batch.spawn(
+                angle_start,
+                angle_count=count,
+                samples=samples,
+                angles=angles,
+                frame_size=frame_size,
+                preset=preset,
+                preset_defaults=preset_defaults,
+                fmt=fmt,
+                quality=quality,
+                view_mode=view_mode,
+                yaw_angles=yaw_count,
+                pitch_rows=pitch_rows,
+                pitch_min=pitch_min,
+                pitch_max=pitch_max,
+            )
+            pending.append(call)
+            if len(pending) >= concurrency:
+                result = pending.pop(0).get()
+                for frame in result["frames"]:
+                    out = out_dir / frame["filename"]
+                    out.write_bytes(frame["data"])
+                    complete += 1
+                    mb = frame["bytes"] / 1024 / 1024
+                    print(f"[{preset} {complete}/{total_frames}] saved {out} ({mb:.2f} MB)")
+
+        for call in pending:
+            result = call.get()
+            for frame in result["frames"]:
+                out = out_dir / frame["filename"]
+                out.write_bytes(frame["data"])
+                complete += 1
+                mb = frame["bytes"] / 1024 / 1024
+                print(f"[{preset} {complete}/{total_frames}] saved {out} ({mb:.2f} MB)")
