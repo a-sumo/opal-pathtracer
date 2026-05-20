@@ -128,7 +128,7 @@ modal run modal_render.py \
 The current README preview was clipped from `Opal-Fast-PathTracer.mp4`:
 
 ```bash
-ffmpeg -ss 00:00:02 -t 7 -i Opal-Fast-PathTracer.mp4 \
+ffmpeg -ss 00:00:17.4 -t 4.5 -i Opal-Fast-PathTracer.mp4 \
   -vf "fps=12,scale=720:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3" \
   media/opal-fast-pathtracer-preview.gif
 ```
