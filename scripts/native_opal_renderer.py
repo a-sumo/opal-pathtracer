@@ -58,6 +58,15 @@ PRESETS = {
         "sigma": 0.9,
         "spec": 0.85,
     },
+    "harlequin": {
+        "diameter_nm": 315.0,
+        "domain_scale": 6.5,
+        "body": (0.020, 0.016, 0.020),
+        "body_weight": 0.30,
+        "play": 2.35,
+        "sigma": 2.45,
+        "spec": 1.15,
+    },
 }
 
 

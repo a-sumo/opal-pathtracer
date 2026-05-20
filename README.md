@@ -35,7 +35,7 @@ For quick local checks or cloud atlas generation, start with the native renderer
 ```bash
 python3 scripts/native_opal_renderer.py \
   --arch auto \
-  --presets black,white,crystal,fire \
+  --presets black,white,crystal,fire,harlequin \
   --angles 144 \
   --cols 12 \
   --frame-size 320 \
@@ -53,7 +53,7 @@ modal run modal_native_render.py \
   --frame-size 320 \
   --cols 12 \
   --ray-steps 3 \
-  --presets black,white,crystal,fire \
+  --presets black,white,crystal,fire,harlequin \
   --output-dir renders/native-preset-atlases
 ```
 
@@ -143,7 +143,7 @@ ffmpeg -framerate 12 -pattern_type glob -i 'renders/opal-100spp-frames/*.webp' \
 
 - Live WebGL renderer with controls for sphere diameter, body tone, domain scale, percolation, scattering, and sample count.
 - Worker-based volume bake so changes do not freeze the UI.
-- Named starting presets for black, white, crystal, and fire-like opal looks.
+- Named starting presets for black, white, crystal, fire-like, and harlequin-like opal looks.
 - Native Taichi atlas renderer for fast preset turntables and multiview sheets.
 - Turntable atlas export from the browser.
 - Scripted single-frame, frame-batch, atlas, and multiview rendering through Puppeteer.
@@ -152,7 +152,7 @@ ffmpeg -framerate 12 -pattern_type glob -i 'renders/opal-100spp-frames/*.webp' \
 
 ## Still Rough
 
-- Opal type presets are still artistic starting points. Black opal, white opal, crystal opal, fire opal, common opal, pinfire, broadflash, and harlequin should become calibrated presets with notes about body tone, sphere diameter range, domain scale, and viewing behavior.
+- Opal type presets are still artistic starting points. Black opal, white opal, crystal opal, fire opal, and harlequin now have native defaults, but common opal, pinfire, and broadflash still need calibrated presets with notes about body tone, sphere diameter range, domain scale, and viewing behavior.
 - Percolation needs a more physical control. The current slider changes connectivity, but it should eventually map to target domain size and cluster statistics.
 - Neighboring grain orientations are too independent, which can make rotation feel jumpier than real opal footage.
 - Cabochons, thin slabs, and cutaways need better path length handling than the current sphere-first turntable path.
