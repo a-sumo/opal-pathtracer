@@ -87,10 +87,12 @@
     <option value="white">White Opal</option>
     <option value="crystal">Crystal Opal</option>
     <option value="fire">Fire Opal</option>
+    <option value="galaxy">Galaxy Opal</option>
   </select></div>
   <div class="row"><label>Sphere d</label><input type="range" id="diam" min="30" max="1500" value="280" step="1"><input class="val" id="diamV" type="number" min="30" max="1500" step="1" value="280"></div>
   <div class="row"><label>Domain Scale</label><input type="range" id="grain" min="1" max="64" value="24" step="1"><input class="val" id="grainV" type="number" min="1" max="64" step="1" value="24"></div>
   <div class="row"><label>Percolation</label><input type="range" id="perc" min="0" max="99" value="42" step="1"><input class="val" id="percV" type="number" min="0" max="0.99" step="0.01" value="0.42"></div>
+  <div class="row"><label>Region Blur</label><input type="range" id="regBlur" min="0" max="100" value="28" step="1"><input class="val" id="regBlurV" type="number" min="0" max="1" step="0.01" value="0.28"></div>
   <div class="row"><label>Body Tone</label><input type="range" id="tone" min="0" max="100" value="45" step="1"><input class="val" id="toneV" type="number" min="0" max="1" step="0.01" value="0.45"></div>
   <div class="row"><label>Bounces</label><input type="range" id="bounces" min="1" max="512" value="12" step="1"><input class="val" id="bouncesV" type="number" min="1" max="512" step="1" value="12"></div>
   <div class="row"><label>Laue σ²</label><input type="range" id="laue" min="1" max="15" value="3" step="1"><input class="val" id="laueV" type="number" min="0.001" max="0.015" step="0.001" value="0.003"></div>
@@ -899,6 +901,7 @@ const ptMat = new THREE.ShaderMaterial({
     uBodyTone:   { value: 0.45 },
     uGrainCount: { value: 1 },
     uDomainScale:{ value: 24 },
+    uRegionBlur: { value: 0.28 },
     uCellOffset: { value: 25 },
     uCellStride: { value: 51 },
     uMaxBounces: { value: 12 },
@@ -934,10 +937,11 @@ const displayScene = new THREE.Scene(); displayScene.add(displayQuad);
 
 // ── Opal presets ──
 const PRESETS = {
-  black:   { d: 280, scale: 24, perc: 0.42, tone: 0.45 },
-  white:   { d: 280, scale: 32, perc: 0.22, tone: 0.15 },
-  crystal: { d: 260, scale: 28, perc: 0.32, tone: 0.10 },
-  fire:    { d: 240, scale: 36, perc: 0.30, tone: 0.25 },
+  black:   { d: 280, scale: 12, perc: 0.38, blur: 0.28, tone: 0.45 },
+  white:   { d: 280, scale: 16, perc: 0.30, blur: 0.42, tone: 0.15 },
+  crystal: { d: 260, scale: 14, perc: 0.34, blur: 0.34, tone: 0.10 },
+  fire:    { d: 240, scale: 10, perc: 0.40, blur: 0.30, tone: 0.25 },
+  galaxy:  { d: 320, scale: 8,  perc: 0.46, blur: 0.78, tone: 0.55 },
 };
 
 function applyPreset(name) {
@@ -945,6 +949,7 @@ function applyPreset(name) {
   document.getElementById('diam').value  = p.d;
   document.getElementById('grain').value = p.scale;
   document.getElementById('perc').value  = Math.round(p.perc * 100);
+  document.getElementById('regBlur').value = Math.round(p.blur * 100);
   document.getElementById('tone').value  = Math.round(p.tone * 100);
   // setValDisplay will write the formatted display string into each .val
   // number input — applyPreset is the only place that writes the slider
@@ -953,10 +958,12 @@ function applyPreset(name) {
   setValDisplay('diam',  p.d);
   setValDisplay('grain', p.scale);
   setValDisplay('perc',  Math.round(p.perc * 100));
+  setValDisplay('regBlur', Math.round(p.blur * 100));
   setValDisplay('tone',  Math.round(p.tone * 100));
   ptMat.uniforms.uDiameter.value = p.d;
   ptMat.uniforms.uBodyTone.value = p.tone;
   ptMat.uniforms.uDomainScale.value = p.scale;
+  ptMat.uniforms.uRegionBlur.value = p.blur;
   gTex = precomputeG(p.d);
   ptMat.uniforms.uGVectors.value = gTex.tex;
   ptMat.uniforms.uGVecCount.value = gTex.count;
@@ -1339,6 +1346,7 @@ const PARAM_DISPLAY = {
   diam:      { scale: 1,    fmt: 0 },
   grain:     { scale: 1,    fmt: 0 },
   perc:      { scale: 100,  fmt: 2 },
+  regBlur:   { scale: 100,  fmt: 2 },
   tone:      { scale: 100,  fmt: 2 },
   bounces:   { scale: 1,    fmt: 0 },
   laue:      { scale: 1000, fmt: 3 },
@@ -1398,6 +1406,7 @@ bind('bounces', e => ptMat.uniforms.uMaxBounces.value = +e.target.value);
 bind('laue', e => { ptMat.uniforms.uLaueSigma2.value = +e.target.value / 1000; });
 bind('envInt', e => { ptMat.uniforms.uEnvIntensity.value = +e.target.value / 100; });
 bind('volScat', e => { ptMat.uniforms.uVolScatter.value = +e.target.value; });
+bind('regBlur', e => { ptMat.uniforms.uRegionBlur.value = +e.target.value / 100; });
 
 let bakeT=0, bp={s:24,p:0.42};
 function sched() { clearTimeout(bakeT); bakeT = setTimeout(() => rebakeVolume(0, bp.s, bp.p), 300); }
@@ -1409,7 +1418,7 @@ bind('perc',  e => { bp.p=+e.target.value/100; sched(); });
 // slider input handlers above are bound (so typing into the input fires
 // through them). Run on next microtask just to be safe.
 ['diam','grain','perc','tone','bounces','laue','envInt','volScat',
- 'ttAngles','ttSpa','ttDist','ttCols','ttFrameSz','ttJpegQ'].forEach(linkValInput);
+ 'regBlur','ttAngles','ttSpa','ttDist','ttCols','ttFrameSz','ttJpegQ'].forEach(linkValInput);
 
 // ── Sync shader uniforms to slider DOM values at startup ──
 // Browsers cache form input values across page reloads, so the displayed
@@ -1441,7 +1450,7 @@ bind('perc',  e => { bp.p=+e.target.value/100; sched(); });
   bp.s = grainD;
   bp.p = percD;
 }
-['tone','bounces','laue','envInt','volScat'].forEach(id => {
+['tone','bounces','laue','envInt','volScat','regBlur'].forEach(id => {
   document.getElementById(id).dispatchEvent(new Event('input'));
 });
 
@@ -1451,7 +1460,7 @@ bind('perc',  e => { bp.p=+e.target.value/100; sched(); });
 // unit conversion. Turntable knobs are bundled too so capture sessions can
 // be reproduced verbatim.
 const SETTINGS_KEYS = [
-  'preset','diam','grain','perc','tone','bounces','laue','envInt','volScat',
+  'preset','diam','grain','perc','regBlur','tone','bounces','laue','envInt','volScat',
   'ttAngles','ttSpa','ttDist','ttCols','ttFrameSz','ttFormat','ttJpegQ',
 ];
 function collectSettings() {

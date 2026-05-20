@@ -21,10 +21,18 @@ from PIL import Image
 import taichi as ti
 
 
+MAX_NATIVE_DOMAIN_SCALE = 15.0
+MAX_NATIVE_GRID_STRIDE = 33
+MAX_NATIVE_GRID_OFFSET = MAX_NATIVE_GRID_STRIDE // 2
+MAX_NATIVE_GRAINS = MAX_NATIVE_GRID_STRIDE * MAX_NATIVE_GRID_STRIDE * MAX_NATIVE_GRID_STRIDE
+
+
 PRESETS = {
     "black": {
         "diameter_nm": 345.0,
-        "domain_scale": 13.0,
+        "domain_scale": 8.0,
+        "percolation": 0.38,
+        "region_blur": 0.42,
         "body": (0.018, 0.015, 0.022),
         "body_weight": 0.34,
         "play": 2.15,
@@ -33,7 +41,9 @@ PRESETS = {
     },
     "white": {
         "diameter_nm": 275.0,
-        "domain_scale": 24.0,
+        "domain_scale": 12.0,
+        "percolation": 0.30,
+        "region_blur": 0.62,
         "body": (0.86, 0.84, 0.76),
         "body_weight": 0.74,
         "play": 0.95,
@@ -42,7 +52,9 @@ PRESETS = {
     },
     "crystal": {
         "diameter_nm": 255.0,
-        "domain_scale": 17.0,
+        "domain_scale": 9.0,
+        "percolation": 0.34,
+        "region_blur": 0.48,
         "body": (0.18, 0.24, 0.30),
         "body_weight": 0.22,
         "play": 1.55,
@@ -51,12 +63,25 @@ PRESETS = {
     },
     "fire": {
         "diameter_nm": 430.0,
-        "domain_scale": 10.0,
+        "domain_scale": 7.0,
+        "percolation": 0.40,
+        "region_blur": 0.38,
         "body": (0.95, 0.22, 0.035),
         "body_weight": 0.52,
         "play": 1.15,
         "sigma": 0.9,
         "spec": 0.85,
+    },
+    "galaxy": {
+        "diameter_nm": 320.0,
+        "domain_scale": 6.5,
+        "percolation": 0.46,
+        "region_blur": 0.95,
+        "body": (0.012, 0.013, 0.020),
+        "body_weight": 0.30,
+        "play": 1.95,
+        "sigma": 1.9,
+        "spec": 1.05,
     },
 }
 
@@ -72,6 +97,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ray-steps", type=int, default=3, help="Domain samples along each chord.")
     parser.add_argument("--quality", type=int, default=92)
     parser.add_argument("--arch", default="auto", choices=["auto", "cuda", "metal", "vulkan", "cpu"])
+    parser.add_argument("--domain-scale", type=float, default=0.0, help="Override preset domain scale. Lower values make larger regions.")
+    parser.add_argument("--percolation", type=float, default=-1.0, help="Override preset bond threshold, 0-1.")
+    parser.add_argument("--region-blur", type=float, default=-1.0, help="Override preset soft boundary width in domain units.")
+    parser.add_argument("--growth-noise", type=float, default=0.22, help="Low-frequency modulation of the bond threshold.")
     parser.add_argument("--view-mode", default="turntable", choices=["turntable", "multiview"])
     parser.add_argument("--yaw-angles", type=int, default=0)
     parser.add_argument("--pitch-rows", type=int, default=1)
@@ -92,6 +121,159 @@ def init_taichi(arch_name: str) -> None:
         ti.init(arch=ti.gpu, default_fp=ti.f32, offline_cache=True)
     else:
         ti.init(arch=arch_map[arch_name], default_fp=ti.f32, offline_cache=True)
+
+
+def py_fract(x: float) -> float:
+    return x - math.floor(x)
+
+
+def py_hash_float(ix: int, iy: int, iz: int, ch: int = 0) -> float:
+    n = ix * 127.1 + iy * 311.7 + iz * 74.7 + ch * 43.3
+    return py_fract(math.sin(n) * 43758.5453123)
+
+
+def py_value_noise(x: float, y: float, z: float) -> float:
+    ix = math.floor(x)
+    iy = math.floor(y)
+    iz = math.floor(z)
+    fx = x - ix
+    fy = y - iy
+    fz = z - iz
+
+    def fade(t: float) -> float:
+        return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+    def lerp(a: float, b: float, t: float) -> float:
+        return a + (b - a) * t
+
+    u = fade(fx)
+    v = fade(fy)
+    w = fade(fz)
+    c000 = py_hash_float(ix, iy, iz, 401)
+    c100 = py_hash_float(ix + 1, iy, iz, 401)
+    c010 = py_hash_float(ix, iy + 1, iz, 401)
+    c110 = py_hash_float(ix + 1, iy + 1, iz, 401)
+    c001 = py_hash_float(ix, iy, iz + 1, 401)
+    c101 = py_hash_float(ix + 1, iy, iz + 1, 401)
+    c011 = py_hash_float(ix, iy + 1, iz + 1, 401)
+    c111 = py_hash_float(ix + 1, iy + 1, iz + 1, 401)
+    x00 = lerp(c000, c100, u)
+    x10 = lerp(c010, c110, u)
+    x01 = lerp(c001, c101, u)
+    x11 = lerp(c011, c111, u)
+    return lerp(lerp(x00, x10, v), lerp(x01, x11, v), w) * 2.0 - 1.0
+
+
+def py_random_normal(ix: int, iy: int, iz: int) -> tuple[float, float, float]:
+    z = py_hash_float(ix, iy, iz, 100) * 2.0 - 1.0
+    a = py_hash_float(ix, iy, iz, 101) * math.tau
+    r = math.sqrt(max(0.0, 1.0 - z * z))
+    return (math.cos(a) * r, math.sin(a) * r, z)
+
+
+def bake_cluster_grid(
+    domain_scale: float,
+    percolation: float,
+    growth_noise: float,
+) -> tuple[np.ndarray, np.ndarray, int, int, int]:
+    """Bake real bond-percolated Voronoi cluster IDs for the native kernel.
+
+    The previous native renderer did a shader-local one-hop redirect. That
+    produced bigger-looking cells in a few places, but it never created a real
+    grown grain with a persistent identity. This is the actual Yokota-style
+    bond-percolation step: neighboring cells are connected by deterministic
+    bonds, union-find collapses connected components, and each component gets a
+    single orientation.
+    """
+    i_max = math.ceil(domain_scale) + 1
+    stride = 2 * i_max + 1
+    if stride > MAX_NATIVE_GRID_STRIDE:
+        raise SystemExit(
+            f"domain scale {domain_scale:.2f} needs stride {stride}, "
+            f"but the native renderer is fixed at {MAX_NATIVE_GRID_STRIDE}. "
+            f"Use --domain-scale <= {MAX_NATIVE_DOMAIN_SCALE:.1f}."
+        )
+    total = stride * stride * stride
+
+    def pack(ix: int, iy: int, iz: int) -> int:
+        return (ix + i_max) * stride * stride + (iy + i_max) * stride + (iz + i_max)
+
+    def unpack(key: int) -> tuple[int, int, int]:
+        z = key % stride - i_max
+        y = (key // stride) % stride - i_max
+        x = key // (stride * stride) - i_max
+        return x, y, z
+
+    parent = np.full(total, -1, dtype=np.int32)
+    size = np.ones(total, dtype=np.int32)
+    for ix in range(-i_max, i_max + 1):
+        for iy in range(-i_max, i_max + 1):
+            for iz in range(-i_max, i_max + 1):
+                nx = ix / domain_scale
+                ny = iy / domain_scale
+                nz = iz / domain_scale
+                if nx * nx + ny * ny + nz * nz <= 1.5:
+                    key = pack(ix, iy, iz)
+                    parent[key] = key
+
+    def find(k: int) -> int:
+        while parent[k] != parent[parent[k]]:
+            parent[k] = parent[parent[k]]
+        while parent[k] != k:
+            k = int(parent[k])
+        return k
+
+    def union(a: int, b: int) -> None:
+        ra = find(a)
+        rb = find(b)
+        if ra == rb:
+            return
+        if size[ra] < size[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        size[ra] += size[rb]
+
+    p = max(0.0, min(1.0, percolation))
+    for ix in range(-i_max, i_max + 1):
+        for iy in range(-i_max, i_max + 1):
+            for iz in range(-i_max, i_max + 1):
+                key = pack(ix, iy, iz)
+                if parent[key] < 0:
+                    continue
+                # Spatially varying threshold creates growth patches instead
+                # of uniform salt-and-pepper bonds.
+                patch = py_value_noise(ix * 0.21, iy * 0.21, iz * 0.21)
+                local_p = max(0.0, min(1.0, p + patch * growth_noise))
+                for dx, dy, dz, ch in ((1, 0, 0, 10), (0, 1, 0, 20), (0, 0, 1, 30)):
+                    nx = ix + dx
+                    ny = iy + dy
+                    nz = iz + dz
+                    if nx > i_max or ny > i_max or nz > i_max:
+                        continue
+                    nkey = pack(nx, ny, nz)
+                    if parent[nkey] < 0:
+                        continue
+                    edge = py_hash_float(min(ix, nx), min(iy, ny), min(iz, nz), ch)
+                    if edge < local_p:
+                        union(key, nkey)
+
+    root_to_id: dict[int, int] = {}
+    grid = np.full((stride, stride, stride), -1, dtype=np.int32)
+    for key in range(total):
+        if parent[key] < 0:
+            continue
+        root = find(key)
+        if root not in root_to_id:
+            root_to_id[root] = len(root_to_id)
+        ix, iy, iz = unpack(key)
+        grid[ix + i_max, iy + i_max, iz + i_max] = root_to_id[root]
+
+    normals = np.zeros((max(1, len(root_to_id)), 3), dtype=np.float32)
+    for root, grain_id in root_to_id.items():
+        ix, iy, iz = unpack(root)
+        normals[grain_id] = py_random_normal(ix, iy, iz)
+
+    return grid, normals, i_max, stride, len(root_to_id)
 
 
 @ti.func
@@ -203,6 +385,17 @@ def voronoi_cell(p, percolation):
 
 
 @ti.func
+def lookup_grain(grain_ids: ti.template(), cx, cy, cz, cell_offset, cell_stride):
+    gx = cx + cell_offset
+    gy = cy + cell_offset
+    gz = cz + cell_offset
+    gid = -1
+    if gx >= 0 and gy >= 0 and gz >= 0 and gx < cell_stride and gy < cell_stride and gz < cell_stride:
+        gid = grain_ids[gx, gy, gz]
+    return gid
+
+
+@ti.func
 def wavelength_rgb(wl):
     r = 0.0
     g = 0.0
@@ -229,6 +422,82 @@ def wavelength_rgb(wl):
 
 
 @ti.func
+def bragg_rgb(crystal, view, d111, n_eff):
+    cos_theta = ti.max(ti.abs(view.dot(crystal)), 0.035)
+    lam = 2.0 * d111 * n_eff * cos_theta
+    return wavelength_rgb(lam)
+
+
+@ti.func
+def sample_region_rgb(
+    p,
+    view,
+    grain_ids: ti.template(),
+    grain_normals: ti.template(),
+    cell_offset,
+    cell_stride,
+    region_blur,
+    d111,
+    n_eff,
+):
+    ix = ti.cast(ti.floor(p.x), ti.i32)
+    iy = ti.cast(ti.floor(p.y), ti.i32)
+    iz = ti.cast(ti.floor(p.z), ti.i32)
+    f = p - ti.Vector([ti.cast(ix, ti.f32), ti.cast(iy, ti.f32), ti.cast(iz, ti.f32)])
+
+    best = 1.0e9
+    second = 1.0e9
+    best_col = ti.Vector([0.0, 0.0, 0.0])
+    soft_col = ti.Vector([0.0, 0.0, 0.0])
+    soft_w = 0.0
+    blur = ti.max(region_blur, 0.0)
+
+    for dx in ti.static(range(-1, 2)):
+        for dy in ti.static(range(-1, 2)):
+            for dz in ti.static(range(-1, 2)):
+                cx = ix + dx
+                cy = iy + dy
+                cz = iz + dz
+                gid = lookup_grain(grain_ids, cx, cy, cz, cell_offset, cell_stride)
+                if gid >= 0:
+                    jitter = ti.Vector(
+                        [
+                            hash41(cx, cy, cz, 0) * 0.9 + 0.05,
+                            hash41(cx, cy, cz, 1) * 0.9 + 0.05,
+                            hash41(cx, cy, cz, 2) * 0.9 + 0.05,
+                        ]
+                    )
+                    delta = ti.Vector([ti.cast(dx, ti.f32), ti.cast(dy, ti.f32), ti.cast(dz, ti.f32)]) + jitter - f
+                    dist = ti.sqrt(ti.max(delta.dot(delta), 0.0))
+                    crystal = grain_normals[gid]
+                    rgb = bragg_rgb(crystal, view, d111, n_eff)
+                    if dist < best:
+                        second = best
+                        best = dist
+                        best_col = rgb
+                    elif dist < second:
+                        second = dist
+                    if blur > 0.001:
+                        # Region blur in domain units. This intentionally
+                        # averages nearby percolated grains in the Voronoi
+                        # neighbourhood, so high values give the softer,
+                        # cloudy/galaxy look instead of hard confetti cells.
+                        w = ti.exp(-dist / blur)
+                        soft_col += rgb * w
+                        soft_w += w
+
+    col = best_col
+    if blur > 0.001 and soft_w > 0.00001:
+        col = soft_col / soft_w
+
+    boundary = ti.max(second - best, 0.0)
+    edge = 1.0 - ti.min(ti.max((boundary - 0.02) / 0.18, 0.0), 1.0)
+    sparkle = 0.55 + 0.45 * edge
+    sparkle *= 1.0 - ti.min(blur * 0.22, 0.35)
+    return col * sparkle
+
+
+@ti.func
 def aces(c):
     return ti.min((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 1.0)
 
@@ -236,6 +505,8 @@ def aces(c):
 @ti.kernel
 def render_atlas(
     out: ti.template(),
+    grain_ids: ti.template(),
+    grain_normals: ti.template(),
     width: ti.i32,
     height: ti.i32,
     frame_size: ti.i32,
@@ -250,7 +521,9 @@ def render_atlas(
     ray_steps: ti.i32,
     diameter_nm: ti.f32,
     domain_scale: ti.f32,
-    percolation: ti.f32,
+    cell_offset: ti.i32,
+    cell_stride: ti.i32,
+    region_blur: ti.f32,
     body_r: ti.f32,
     body_g: ti.f32,
     body_b: ti.f32,
@@ -322,14 +595,17 @@ def render_atlas(
                             f = (ti.cast(st, ti.f32) + 0.5) / ti.cast(ray_steps, ti.f32)
                             p = cam + rd * (t0 + path_len * f)
                             q = p / radius * domain_scale
-                            cx, cy, cz, boundary = voronoi_cell(q, percolation)
-                            crystal = hash_normal(cx, cy, cz)
-                            cos_theta = ti.max(ti.abs(view.dot(crystal)), 0.035)
-                            lam = 2.0 * d111 * n_eff * cos_theta
-                            rgb = wavelength_rgb(lam)
-                            edge = 1.0 - ti.min(ti.max((boundary - 0.02) / 0.18, 0.0), 1.0)
-                            sparkle = 0.55 + 0.45 * edge
-                            grain_col += rgb * sparkle
+                            grain_col += sample_region_rgb(
+                                q,
+                                view,
+                                grain_ids,
+                                grain_normals,
+                                cell_offset,
+                                cell_stride,
+                                region_blur,
+                                d111,
+                                n_eff,
+                            )
                         grain_col /= ti.cast(ray_steps, ti.f32)
 
                         body = ti.Vector([body_r, body_g, body_b])
@@ -360,18 +636,57 @@ def render_atlas(
         out[y, x] = rgba
 
 
-def render_one(args: argparse.Namespace, preset_name: str) -> Path:
-    params = PRESETS[preset_name]
+def atlas_dimensions(args: argparse.Namespace) -> tuple[int, int, int, int, int]:
     yaw_angles = args.yaw_angles or args.angles
     total_views = yaw_angles * args.pitch_rows if args.view_mode == "multiview" else args.angles
     rows = math.ceil(total_views / args.cols)
     width = args.cols * args.frame_size
     height = rows * args.frame_size
+    return yaw_angles, total_views, rows, width, height
 
-    out_field = ti.Vector.field(4, dtype=ti.u8, shape=(height, width))
+
+def render_one(
+    args: argparse.Namespace,
+    preset_name: str,
+    out_field,
+    grain_ids,
+    grain_normals,
+) -> Path:
+    params = PRESETS[preset_name]
+    domain_scale = args.domain_scale if args.domain_scale > 0.0 else params["domain_scale"]
+    percolation = args.percolation if args.percolation >= 0.0 else params["percolation"]
+    region_blur = args.region_blur if args.region_blur >= 0.0 else params["region_blur"]
+    yaw_angles, total_views, rows, width, height = atlas_dimensions(args)
+
+    cluster_grid, normals, cell_offset, cell_stride, grain_count = bake_cluster_grid(
+        domain_scale,
+        percolation,
+        args.growth_noise,
+    )
+    print(
+        f"{preset_name}: scale={domain_scale:.2f}, p={percolation:.2f}, "
+        f"blur={region_blur:.2f}, grains={grain_count}, stride={cell_stride}"
+    )
+    fixed_grid = np.full(
+        (MAX_NATIVE_GRID_STRIDE, MAX_NATIVE_GRID_STRIDE, MAX_NATIVE_GRID_STRIDE),
+        -1,
+        dtype=np.int32,
+    )
+    start = MAX_NATIVE_GRID_OFFSET - cell_offset
+    end = start + cell_stride
+    fixed_grid[start:end, start:end, start:end] = cluster_grid
+
+    fixed_normals = np.zeros((MAX_NATIVE_GRAINS, 3), dtype=np.float32)
+    fixed_normals[: normals.shape[0], :] = normals
+
+    grain_ids.from_numpy(fixed_grid)
+    grain_normals.from_numpy(fixed_normals)
+
     t0 = time.time()
     render_atlas(
         out_field,
+        grain_ids,
+        grain_normals,
         width,
         height,
         args.frame_size,
@@ -385,8 +700,10 @@ def render_one(args: argparse.Namespace, preset_name: str) -> Path:
         args.samples,
         args.ray_steps,
         params["diameter_nm"],
-        params["domain_scale"],
-        0.38,
+        domain_scale,
+        MAX_NATIVE_GRID_OFFSET,
+        MAX_NATIVE_GRID_STRIDE,
+        region_blur,
         params["body"][0],
         params["body"][1],
         params["body"][2],
@@ -418,8 +735,15 @@ def main() -> None:
     for preset in preset_names:
         if preset not in PRESETS:
             raise SystemExit(f"Unknown preset {preset!r}. Known: {', '.join(PRESETS)}")
+    _, _, _, width, height = atlas_dimensions(args)
+    out_field = ti.Vector.field(4, dtype=ti.u8, shape=(height, width))
+    grain_ids = ti.field(
+        dtype=ti.i32,
+        shape=(MAX_NATIVE_GRID_STRIDE, MAX_NATIVE_GRID_STRIDE, MAX_NATIVE_GRID_STRIDE),
+    )
+    grain_normals = ti.Vector.field(3, dtype=ti.f32, shape=(MAX_NATIVE_GRAINS,))
     for preset in preset_names:
-        render_one(args, preset)
+        render_one(args, preset, out_field, grain_ids, grain_normals)
 
 
 if __name__ == "__main__":
