@@ -1,5 +1,9 @@
 # Opal Path Tracer
 
+## Live Demo
+
+Try the interactive WebGL demo here: **[nano-optics-opal-pathtracer.pages.dev](https://nano-optics-opal-pathtracer.pages.dev/)**
+
 ![Fast opal path tracer preview](media/opal-fast-pathtracer-preview.gif)
 
 This is a small renderer for exploring opal play-of-color. It treats the stone as a volume of many tiny crystal domains, then traces wavelength-sampled rays through that structure so the color comes from optical geometry rather than a painted texture.
