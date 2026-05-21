@@ -3,18 +3,9 @@
 ## Live Demo
 
 Try the interactive WebGL demo here: **[nano-optics-opal-pathtracer.pages.dev](https://nano-optics-opal-pathtracer.pages.dev/)**
+I've also written an article on the subject: [Structural Color in Opals: From Silica Spheres to Photonic Crystals](https://armandsumo.com/posts/opals/).
 
 ![Fast opal path tracer preview](media/opal-fast-pathtracer-preview.gif)
-
-This is a small renderer for exploring opal play-of-color. It treats the stone as a volume of many tiny crystal domains, then traces wavelength-sampled rays through that structure so the color comes from optical geometry rather than a painted texture.
-
-The fast renderer is now the flagship interactive version. It trades some of the older reference renderer's heavier controls for a more immediate studio scene, named opal presets, shape presets, and a sample budget that feels usable inside an article or demo page.
-
-The project is inspired by Soma Yokota and Issei Fujishiro's work on opal rendering. Their useful abstraction is that a visible gem is too large to model sphere by sphere, but it can be represented as a polycrystalline material where each grain has its own local lattice orientation. This repo turns that idea into a compact WebGL experiment that can export turntable frames for AR.
-
-## Article
-
-The companion article is here: [Structural Color in Opals: From Silica Spheres to Photonic Crystals](https://armandsumo.com/posts/opals/).
 
 ## Run
 
